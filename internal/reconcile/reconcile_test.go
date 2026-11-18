@@ -96,10 +96,11 @@ func (r run) reconciler(t *testing.T) (*reconcile.Reconciler, *[]string) {
 	}
 	var changes []string
 	return reconcile.New(client, r.cfg, reconcile.Options{
-		DryRun:       r.dryRun,
-		Report:       func(c reconcile.Change) { changes = append(changes, c.String()) },
-		Progress:     r.progress,
-		PollInterval: r.pollInterval,
+		DryRun:        r.dryRun,
+		Report:        func(c reconcile.Change) { changes = append(changes, c.String()) },
+		Progress:      r.progress,
+		PollInterval:  r.pollInterval,
+		RetryInterval: time.Millisecond,
 	}), &changes
 }
 
@@ -431,14 +432,22 @@ func TestDryRunOnUninitializedController(t *testing.T) {
 
 func TestEnsureResetsUndeclaredJobAgeBackoff(t *testing.T) {
 	cfg := desiredState()
-	cfg.Controller.MinimumJobAgeBackoff = 5
+	cfg.Controller.MinimumJobAgeBackoff = new(uint(5))
 	srv := initialized(t, cfg)
 	srv.State(func(st *garmtest.State) {
 		assertEqual(t, "job age backoff", st.Controller.MinimumJobAgeBackoff, 5)
 	})
 
-	cfg.Controller.MinimumJobAgeBackoff = 0
+	// Zero is a value of its own: jobs get a runner without waiting.
+	cfg.Controller.MinimumJobAgeBackoff = new(uint(0))
 	changes := run{srv: srv, cfg: cfg}.ensure(t)
+	assertEqual(t, "changes", changes, []string{"update controller (minimum_job_age_backoff)"})
+	srv.State(func(st *garmtest.State) {
+		assertEqual(t, "job age backoff", st.Controller.MinimumJobAgeBackoff, 0)
+	})
+
+	cfg.Controller.MinimumJobAgeBackoff = nil
+	changes = run{srv: srv, cfg: cfg}.ensure(t)
 	assertEqual(t, "changes", changes, []string{"update controller (minimum_job_age_backoff)"})
 	srv.State(func(st *garmtest.State) {
 		assertEqual(t, "job age backoff", st.Controller.MinimumJobAgeBackoff, 30)

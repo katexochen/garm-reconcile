@@ -193,36 +193,74 @@ func poolBalancer(t params.PoolBalancerType) params.PoolBalancerType {
 // ensureWebhook installs or removes the webhook of an entity. entityID is
 // empty in a dry run that would create the entity.
 func (r *Reconciler) ensureWebhook(ctx context.Context, f *forge, kind garm.EntityKind, name, entityID string, want config.Entity) error {
-	// Garm has no webhooks for enterprises.
-	if kind == garm.Enterprise {
-		return nil
-	}
-	install := Change{Action: Create, Kind: f.kind("webhook"), Name: name}
-	if entityID == "" {
-		if want.InstallWebhook {
-			r.opts.Report(install)
+	// installed is whether the forge delivers to this controller, own
+	// whether it does so through the webhook garm installs and removes.
+	var installed, own bool
+	if entityID != "" && !r.releasedWebhooks[entityID] {
+		hook, err := r.getWebhook(ctx, kind, entityID)
+		switch {
+		case err == nil:
+			installed, own = true, !isManualWebhook(hook, r.cfg.Controller.WebhookURL)
+		case garm.IsNotFound(err):
+		case !want.InstallWebhook && (errors.Is(err, garm.ErrNoWebhooks) || garm.IsBadRequest(err)):
+			// Garm cannot manage webhooks at all or not with the
+			// credentials of this entity, so none of its own is there.
+			return nil
+		default:
+			return fmt.Errorf("reading the %s of %s: %w", f.kind("webhook"), name, err)
 		}
-		return nil
-	}
-
-	_, err := r.getWebhook(ctx, kind, entityID)
-	installed := err == nil
-	switch {
-	case errors.Is(err, garm.ErrNoWebhooks) && !want.InstallWebhook:
-		return nil
-	case err != nil && !garm.IsNotFound(err):
-		return fmt.Errorf("reading the %s of %s: %w", f.kind("webhook"), name, err)
 	}
 
 	switch {
 	case want.InstallWebhook && !installed:
-		return r.apply(install, func() error {
+		return r.apply(Change{Action: Create, Kind: f.kind("webhook"), Name: name}, func() error {
 			return r.client.InstallWebhook(ctx, kind, entityID, params.InstallWebhookParams{})
 		})
-	case !want.InstallWebhook && installed:
+	case !want.InstallWebhook && own:
 		return r.apply(Change{Action: Delete, Kind: f.kind("webhook"), Name: name}, func() error {
 			return r.client.UninstallWebhook(ctx, kind, entityID)
 		})
+	}
+	return nil
+}
+
+// isManualWebhook reports whether a webhook was added to the forge by hand.
+// Such a webhook delivers to the webhook URL of the controller, while garm
+// installs its own for a URL below it, and refuses to remove any other.
+func isManualWebhook(hook params.HookInfo, webhookURL string) bool {
+	return strings.EqualFold(strings.TrimRight(hook.URL, "/"), strings.TrimRight(webhookURL, "/"))
+}
+
+// releaseWebhooks removes the webhooks garm installed while the controller
+// had the given webhook URL. Garm finds its webhooks by the current URL, so
+// after a change it could neither remove nor replace them. ensureWebhook
+// installs them again where they are declared.
+func (r *Reconciler) releaseWebhooks(ctx context.Context, webhookURL string) error {
+	for _, f := range r.forges {
+		for _, kind := range f.entityKinds() {
+			entities, err := r.forgeEntities(ctx, f, kind)
+			if err != nil {
+				return err
+			}
+			for _, entity := range entities {
+				hook, err := r.getWebhook(ctx, kind, entity.ID)
+				switch {
+				case errors.Is(err, garm.ErrNoWebhooks), garm.IsNotFound(err), garm.IsBadRequest(err):
+					continue
+				case err != nil:
+					return fmt.Errorf("reading the %s of %s: %w", f.kind("webhook"), entity.FullName(), err)
+				case isManualWebhook(hook, webhookURL):
+					continue
+				}
+				err = r.apply(Change{Action: Delete, Kind: f.kind("webhook"), Name: entity.FullName()}, func() error {
+					return r.client.UninstallWebhook(ctx, kind, entity.ID)
+				})
+				if err != nil {
+					return err
+				}
+				r.releasedWebhooks[entity.ID] = true
+			}
+		}
 	}
 	return nil
 }
@@ -232,7 +270,7 @@ func (r *Reconciler) ensureWebhook(ctx context.Context, f *forge, kind garm.Enti
 // forge with the previous ones if those were revoked, so failures get a few
 // more attempts.
 func (r *Reconciler) getWebhook(ctx context.Context, kind garm.EntityKind, entityID string) (params.HookInfo, error) {
-	const attempts = 5
+	const attempts = 10
 	for attempt := 1; ; attempt++ {
 		hook, err := r.client.GetWebhook(ctx, kind, entityID)
 		if !garm.IsServerError(err) || attempt == attempts {
@@ -241,7 +279,7 @@ func (r *Reconciler) getWebhook(ctx context.Context, kind garm.EntityKind, entit
 		select {
 		case <-ctx.Done():
 			return hook, ctx.Err()
-		case <-time.After(min(r.opts.PollInterval, time.Second)):
+		case <-time.After(r.opts.RetryInterval):
 		}
 	}
 }

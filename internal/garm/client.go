@@ -181,12 +181,10 @@ func (c *Client) DeleteEntity(ctx context.Context, kind EntityKind, id string) e
 	return c.do(ctx, http.MethodDelete, nil, nil, kind.collection(), id)
 }
 
-// ListEntityPools lists the pools of an entity. Listed pools are incomplete,
-// garm leaves out their extra specs for one. GetPool returns a complete
-// pool.
-// GetWebhook returns the webhook garm installed for an entity in its forge.
-// It fails with a not found error if there is none, and with ErrNoWebhooks
-// if garm is not set up to manage webhooks.
+// GetWebhook returns the webhook of an entity in its forge that delivers to
+// this controller, whether garm installed it or not. It fails with a not
+// found error if there is none, and with ErrNoWebhooks if garm is not set up
+// to manage webhooks.
 func (c *Client) GetWebhook(ctx context.Context, kind EntityKind, entityID string) (params.HookInfo, error) {
 	var hook params.HookInfo
 	err := c.do(ctx, http.MethodGet, nil, &hook, kind.collection(), entityID, "webhook")
@@ -201,6 +199,9 @@ func (c *Client) UninstallWebhook(ctx context.Context, kind EntityKind, entityID
 	return webhookError(c.do(ctx, http.MethodDelete, nil, nil, kind.collection(), entityID, "webhook"))
 }
 
+// ListEntityPools lists the pools of an entity. Listed pools are incomplete,
+// garm leaves out their extra specs for one. GetPool returns a complete
+// pool.
 func (c *Client) ListEntityPools(ctx context.Context, kind EntityKind, entityID string) ([]params.Pool, error) {
 	var pools []params.Pool
 	err := c.do(ctx, http.MethodGet, nil, &pools, kind.collection(), entityID, "pools")

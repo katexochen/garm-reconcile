@@ -42,6 +42,9 @@ type State struct {
 	// FailingWebhookReads is the number of requests for a webhook that
 	// fail next, like when garm cannot reach the forge.
 	FailingWebhookReads int
+	// UnreadableWebhooks makes the forge refuse garm access to webhooks,
+	// like it does for a token without the permission.
+	UnreadableWebhooks bool
 	// KeepDeletedScaleSets makes the controller answer requests to delete
 	// a scale set with success without deleting it, which is what garm
 	// does when GitHub fails to delete its side.
@@ -1176,13 +1179,20 @@ func (s *Server) webhooks(kind garm.EntityKind) http.Handler {
 		if err != nil {
 			return nil, err
 		}
+		if st.UnreadableWebhooks {
+			return nil, badRequest("repository not found or your PAT does not have access to manage webhooks")
+		}
+		// Garm only recognizes a webhook by the current URLs of the
+		// controller.
+		own := entity.Webhook != nil && entity.Webhook.URL == st.webhookURL()
+		manual := entity.Webhook != nil && entity.Webhook.URL == st.Controller.WebhookURL
 		switch r.Method {
 		case http.MethodGet:
 			if st.FailingWebhookReads > 0 {
 				st.FailingWebhookReads--
 				return nil, &apiError{http.StatusInternalServerError, "Server error", ""}
 			}
-			if entity.Webhook == nil {
+			if !own && !manual {
 				return nil, notFound()
 			}
 		case http.MethodPost:
@@ -1191,14 +1201,19 @@ func (s *Server) webhooks(kind garm.EntityKind) http.Handler {
 				return nil, err
 			}
 			if entity.Webhook != nil {
-				return nil, conflict("hook already installed")
+				return nil, conflict("a webhook containing the controller ID or hostname of this controller is already installed")
 			}
 			entity.Webhook = &params.HookInfo{
-				ID: int64(st.newID()), URL: st.Controller.WebhookURL, Active: true,
+				ID: int64(st.newID()), URL: st.webhookURL(), Active: true,
 				Events: []string{"workflow_job"}, InsecureSSL: install.InsecureSSL,
 			}
 		case http.MethodDelete:
-			entity.Webhook = nil
+			switch {
+			case own:
+				entity.Webhook = nil
+			case manual:
+				return nil, badRequest("base hook found (%s) and must be deleted manually", entity.Webhook.URL)
+			}
 			return nil, nil
 		}
 		return *entity.Webhook, nil
@@ -1208,9 +1223,17 @@ func (s *Server) webhooks(kind garm.EntityKind) http.Handler {
 		managed := s.state.ManageWebhooks && kind != garm.Enterprise
 		s.mu.Unlock()
 		if !managed {
-			http.NotFound(w, r)
+			// Garm answers paths it has no route for like this.
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(apiparams.APIErrorResponse{Error: "Not found", Details: "Resource not found"})
 			return
 		}
 		serve.ServeHTTP(w, r)
 	})
+}
+
+// webhookURL returns the URL garm installs its webhooks for.
+func (st *State) webhookURL() string {
+	return st.Controller.WebhookURL + "/" + st.Controller.ControllerID.String()
 }

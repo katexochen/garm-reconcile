@@ -72,11 +72,15 @@ func IsBadRequest(err error) bool {
 // configuration.
 var ErrNoWebhooks = errors.New("garm is not configured to manage webhooks")
 
-// webhookError recognizes that garm does not manage webhooks. It does not
-// serve the endpoints then, so the error does not come from the API.
+// unknownRoute is the code of garm's answer to paths it does not serve. A
+// resource that does not exist is a "Not Found" instead.
+const unknownRoute = "Not found"
+
+// webhookError recognizes that garm does not manage webhooks, in which case
+// it does not serve the endpoints for them.
 func webhookError(err error) error {
 	var apiErr *Error
-	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound && apiErr.Code == "" {
+	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound && apiErr.Code == unknownRoute {
 		return ErrNoWebhooks
 	}
 	return err

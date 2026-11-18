@@ -24,6 +24,10 @@ the workaround named with it can go.
   never returned, which is right, but nothing tells whether a stored secret is
   the declared one. A fingerprint in the response would allow sending secrets
   only when they change, and showing a rotation in `plan`.
+- **Whether garm manages webhooks is not exposed.** The webhook endpoints
+  are not routed without `enable_webhook_management`, which clients can only
+  tell from the body of the 404 ("Not found" of the catch-all route, where a
+  missing webhook is "Not Found"). A field in the controller info would do.
 
 ## Updating state
 
@@ -42,6 +46,12 @@ the workaround named with it can go.
   request that needs the forge right after it, like reading a webhook, fails
   with HTTP 500 if the previous token was revoked. Workaround: `getWebhook`
   retries.
+- **An installed webhook is never updated.** A new webhook secret of an
+  entity is stored, but the webhook in the forge keeps signing with the old
+  one. After a change of the controller's `webhook_url`, garm no longer
+  finds the webhooks it installed: it cannot remove them, and refuses to
+  install new ones next to them. Workaround for the URL: `releaseWebhooks`
+  removes them before the change.
 - **Updating credentials always notifies.** `UpdateGithubCredentials` rewrites
   the payload and notifies watchers even if the token is the same. Entities
   compare the webhook secret first, credentials could do the same.
@@ -68,8 +78,9 @@ the workaround named with it can go.
   and creates no index.
 - **Creating and deleting a scale set talks to GitHub**, as does moving it
   to another runner group. None of it can run against a controller without
-  GitHub, so the integration test here does not cover scale sets. Deferring the GitHub side to the scale set worker,
-  like the state `pending_create` suggests, would make the API testable.
+  GitHub, so the integration test here does not cover scale sets. Deferring
+  the GitHub side to the scale set worker, like the state `pending_create`
+  suggests, would make the API testable.
 - **The runner group is `github-runner-group` on create and `runner_group` on
   update.**
 

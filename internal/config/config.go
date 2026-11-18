@@ -40,8 +40,9 @@ type Controller struct {
 	AgentURL    string `json:"agent_url"`
 	WebhookURL  string `json:"webhook_url"`
 	// MinimumJobAgeBackoff is the time in seconds a job has to be queued
-	// before garm creates a runner for it. Zero selects garm's default.
-	MinimumJobAgeBackoff uint `json:"minimum_job_age_backoff,omitempty"`
+	// before garm creates a runner for it. Garm's default applies if it
+	// is not set.
+	MinimumJobAgeBackoff *uint `json:"minimum_job_age_backoff,omitempty"`
 }
 
 // Forge is everything declared for one forge type.

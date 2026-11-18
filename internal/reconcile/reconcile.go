@@ -101,6 +101,9 @@ type Options struct {
 	// PollInterval is the time between checks on the runners of a pool
 	// that is being removed. It defaults to 5 seconds.
 	PollInterval time.Duration
+	// RetryInterval is the time between attempts to read a webhook from a
+	// forge that garm fails to reach. It defaults to 1 second.
+	RetryInterval time.Duration
 }
 
 // Reconciler brings one garm controller to a desired state.
@@ -109,6 +112,10 @@ type Reconciler struct {
 	cfg    *config.Config
 	forges []*forge
 	opts   Options
+
+	// releasedWebhooks holds the IDs of the entities whose webhook was
+	// removed because the webhook URL of the controller changes.
+	releasedWebhooks map[string]bool
 }
 
 // New returns a Reconciler that brings the controller behind client to the
@@ -123,11 +130,14 @@ func New(client *garm.Client, cfg *config.Config, opts Options) *Reconciler {
 	if opts.PollInterval == 0 {
 		opts.PollInterval = 5 * time.Second
 	}
+	if opts.RetryInterval == 0 {
+		opts.RetryInterval = time.Second
+	}
 	forges := []*forge{
 		{typ: params.GithubEndpointType, cfg: cfg.GitHub},
 		{typ: params.GiteaEndpointType, cfg: cfg.Gitea},
 	}
-	return &Reconciler{client: client, cfg: cfg, forges: forges, opts: opts}
+	return &Reconciler{client: client, cfg: cfg, forges: forges, opts: opts, releasedWebhooks: map[string]bool{}}
 }
 
 // Ensure creates and updates resources until garm has everything that is
@@ -232,15 +242,16 @@ func (r *Reconciler) ensureController(ctx context.Context) error {
 		return fmt.Errorf("reading the controller settings: %w", err)
 	}
 	want := r.cfg.Controller
-	if want.MinimumJobAgeBackoff == 0 {
-		want.MinimumJobAgeBackoff = defaultJobAgeBackoff
+	backoff := uint(defaultJobAgeBackoff)
+	if want.MinimumJobAgeBackoff != nil {
+		backoff = *want.MinimumJobAgeBackoff
 	}
 	update := params.UpdateControllerParams{
 		MetadataURL:          &want.MetadataURL,
 		CallbackURL:          &want.CallbackURL,
 		AgentURL:             &want.AgentURL,
 		WebhookURL:           &want.WebhookURL,
-		MinimumJobAgeBackoff: &want.MinimumJobAgeBackoff,
+		MinimumJobAgeBackoff: &backoff,
 	}
 	var fields []string
 	if want.AgentURL != info.AgentURL {
@@ -252,7 +263,7 @@ func (r *Reconciler) ensureController(ctx context.Context) error {
 	if want.MetadataURL != info.MetadataURL {
 		fields = append(fields, "metadata_url")
 	}
-	if want.MinimumJobAgeBackoff != info.MinimumJobAgeBackoff {
+	if backoff != info.MinimumJobAgeBackoff {
 		fields = append(fields, "minimum_job_age_backoff")
 	}
 	if want.WebhookURL != info.WebhookURL {
@@ -260,6 +271,11 @@ func (r *Reconciler) ensureController(ctx context.Context) error {
 	}
 	if len(fields) == 0 {
 		return nil
+	}
+	if info.WebhookURL != "" && want.WebhookURL != info.WebhookURL {
+		if err := r.releaseWebhooks(ctx, info.WebhookURL); err != nil {
+			return err
+		}
 	}
 	err = r.apply(Change{Action: Update, Kind: KindController, Fields: fields}, func() error {
 		return r.client.UpdateController(ctx, update)

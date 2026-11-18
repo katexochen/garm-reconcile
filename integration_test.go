@@ -260,4 +260,12 @@ delete gitea repository owner/repo
 delete gitea credentials main
 delete gitea endpoint local
 `)
+
+	// This controller is not configured to manage webhooks.
+	change("    my-org:\n", "    my-org:\n      install_webhook: true\n")
+	path := writeFile(t, t.TempDir(), "garm.yaml", state)
+	_, _, err := execute(t, "apply", "-url", url, path)
+	if err == nil || !strings.Contains(err.Error(), "garm is not configured to manage webhooks") {
+		t.Errorf("apply with a webhook = %v, want it to report that garm does not manage webhooks", err)
+	}
 }

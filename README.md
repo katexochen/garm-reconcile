@@ -43,7 +43,7 @@ controller:
   callback_url: http://10.0.10.1:9997/api/v1/callbacks
   agent_url: http://10.0.10.1:9997/agent
   webhook_url: https://garm.example.com/webhooks
-  minimum_job_age_backoff: 30 # optional
+  minimum_job_age_backoff: 30 # optional, 0 for no backoff
 
 github:
   credentials:
@@ -116,12 +116,25 @@ Entities take `credentials_name`, `webhook_secret`, `pool_balancer_type`,
 `agent_mode`, `install_webhook`, `pools` and `scale_sets`. A webhook secret is
 generated when an entity is created without one.
 
+Pools take the fields of garm's request to create a pool, except for
+`runner_prefix` and `template_id`.
+
+### Webhooks
+
 With `install_webhook`, garm installs its webhook in the repository or
 organization, and without it, garm's webhook is removed from there. Both
 require `enable_webhook_management` in the configuration of garm. Without that
 setting, `install_webhook` is an error and existing webhooks are left alone.
-garm has no webhooks for enterprises. Pools take the fields of garm's request to
-create a pool, except for `runner_prefix` and `template_id`.
+garm has no webhooks for enterprises.
+
+A webhook that was added by hand for the `webhook_url` of the controller
+counts as installed and is never removed. Where the token of the credentials
+may not read webhooks, `install_webhook` is an error, and nothing is removed.
+
+When `webhook_url` changes, garm's webhooks are removed before and installed
+again after the change. A changed `webhook_secret` does not reach a webhook
+that is installed, as garm never updates one: apply once without
+`install_webhook` to have it installed anew.
 
 ### Endpoints
 
@@ -170,9 +183,9 @@ type of a template cannot be changed.
 
 Any string can be replaced with `{ _secret: <path> }`, and is then read from
 that file. This also works for values that are not secret but kept in a file,
-like the data of a template. Trailing newlines are removed. Relative paths are resolved against
-`$CREDENTIALS_DIRECTORY`, which systemd sets for services that use
-`LoadCredential=`.
+like the data of a template. Trailing newlines are removed. Relative paths
+are resolved against `$CREDENTIALS_DIRECTORY`, which systemd sets for services
+that use `LoadCredential=`.
 
 garm never returns secrets, so garm-reconcile cannot tell whether one changed.
 It sends the secrets of credentials and declared webhook secrets on every
@@ -197,15 +210,17 @@ desired state is an error.
    credentials and endpoints that are not declared.
 
 A pool or scale set that has runners cannot be deleted. garm-reconcile disables
-it, removes its idle runners and waits for the remaining ones to finish their jobs.
-It does not remove a runner that executes a job. On Gitea this depends on garm
-knowing that the runner is busy, which it learns from the webhook of the
-repository or organization (see `install_webhook`): without it, garm takes a busy runner for idle,
-and Gitea does not refuse to delete it. GitHub does. `-drain-timeout` limits how long
-the second phase may take. When it expires, `apply` fails and the pools and
-scale sets stay disabled until the next run deletes them. Waiting cannot outlast the lifetime
-of garm's API tokens (`jwt_auth.time_to_live`) either. An interrupted `apply`
-continues where it left off when run again.
+it, removes its idle runners and waits for the remaining ones to finish their
+jobs. It does not remove a runner that executes a job. On Gitea this depends on
+garm knowing that the runner is busy, which it learns from the webhook of the
+repository or organization (see [Webhooks](#webhooks)): without it, garm takes
+a busy runner for idle, and Gitea does not refuse to delete it. GitHub does.
+
+`-drain-timeout` limits how long the second phase may take. When it expires,
+`apply` fails and the pools and scale sets stay disabled until the next run
+deletes them. Waiting cannot outlast the lifetime of garm's API tokens
+(`jwt_auth.time_to_live`) either. An interrupted `apply` continues where it
+left off when run again.
 
 ## systemd
 
