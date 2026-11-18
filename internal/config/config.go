@@ -106,6 +106,10 @@ type Entity struct {
 	WebhookSecret    string                  `json:"webhook_secret,omitempty"`
 	PoolBalancerType params.PoolBalancerType `json:"pool_balancer_type,omitempty"`
 	AgentMode        bool                    `json:"agent_mode,omitempty"`
+	// InstallWebhook makes garm install its webhook in the forge, which
+	// requires webhook management to be enabled in garm. Otherwise garm's
+	// webhook is removed.
+	InstallWebhook bool `json:"install_webhook,omitempty"`
 	// Pools are keyed by their runner prefix, which identifies a pool
 	// within its entity.
 	Pools map[string]Pool `json:"pools,omitempty"`

@@ -113,8 +113,14 @@ scale sets. Endpoints and templates cannot have the same name on both forges,
 as garm keeps each of them in one namespace.
 
 Entities take `credentials_name`, `webhook_secret`, `pool_balancer_type`,
-`agent_mode`, `pools` and `scale_sets`. A webhook secret is generated when an
-entity is created without one. Pools take the fields of garm's request to
+`agent_mode`, `install_webhook`, `pools` and `scale_sets`. A webhook secret is
+generated when an entity is created without one.
+
+With `install_webhook`, garm installs its webhook in the repository or
+organization, and without it, garm's webhook is removed from there. Both
+require `enable_webhook_management` in the configuration of garm. Without that
+setting, `install_webhook` is an error and existing webhooks are left alone.
+garm has no webhooks for enterprises. Pools take the fields of garm's request to
 create a pool, except for `runner_prefix` and `template_id`.
 
 ### Endpoints
@@ -193,8 +199,8 @@ desired state is an error.
 A pool or scale set that has runners cannot be deleted. garm-reconcile disables
 it, removes its idle runners and waits for the remaining ones to finish their jobs.
 It does not remove a runner that executes a job. On Gitea this depends on garm
-knowing that the runner is busy, which it learns from the webhooks of the
-repository or organization: without them, garm takes a busy runner for idle,
+knowing that the runner is busy, which it learns from the webhook of the
+repository or organization (see `install_webhook`): without it, garm takes a busy runner for idle,
 and Gitea does not refuse to delete it. GitHub does. `-drain-timeout` limits how long
 the second phase may take. When it expires, `apply` fails and the pools and
 scale sets stay disabled until the next run deletes them. Waiting cannot outlast the lifetime
@@ -223,10 +229,6 @@ DynamicUser=yes
 
 With this unit, the state file references the secrets as
 `{ _secret: garm-admin-password }` and `{ _secret: github-token }`.
-
-## Not supported yet
-
-- Installing webhooks
 
 ## Development
 

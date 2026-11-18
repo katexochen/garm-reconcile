@@ -36,6 +36,12 @@ type State struct {
 	Pools       []*params.Pool
 	ScaleSets   []*params.ScaleSet
 	Instances   []*params.Instance
+	// ManageWebhooks is whether the controller is configured to manage
+	// webhooks. Without it, garm does not serve the webhook endpoints.
+	ManageWebhooks bool
+	// FailingWebhookReads is the number of requests for a webhook that
+	// fail next, like when garm cannot reach the forge.
+	FailingWebhookReads int
 	// KeepDeletedScaleSets makes the controller answer requests to delete
 	// a scale set with success without deleting it, which is what garm
 	// does when GitHub fails to delete its side.
@@ -58,6 +64,8 @@ type Credentials struct {
 type Entity struct {
 	garm.Entity
 	WebhookSecret string
+	// Webhook is the webhook garm installed in the forge, if any.
+	Webhook *params.HookInfo
 }
 
 // Server is a fake garm controller.
@@ -127,6 +135,7 @@ func NewServer(t *testing.T) *Server {
 		mux.Handle("DELETE "+prefix+"/{id}", s.route(configured, deleteEntity(kind)))
 		mux.Handle("GET "+prefix+"/{id}/pools", s.route(configured, listEntityPools(kind)))
 		mux.Handle("POST "+prefix+"/{id}/pools", s.route(configured, createEntityPool(kind)))
+		mux.Handle(prefix+"/{id}/webhook", s.webhooks(kind))
 		mux.Handle("GET "+prefix+"/{id}/scalesets", s.route(configured, listEntityScaleSets(kind)))
 		mux.Handle("POST "+prefix+"/{id}/scalesets", s.route(configured, createEntityScaleSet(kind)))
 	}
@@ -1157,4 +1166,51 @@ func (st *State) listScaleSetInstances(r *http.Request) (any, error) {
 		return []params.Instance{}, nil
 	}
 	return st.scaleSetInstances(set.ID), nil
+}
+
+// webhooks serves the webhook of an entity, unless the controller does not
+// manage webhooks or the entity is an enterprise, for which garm has none.
+func (s *Server) webhooks(kind garm.EntityKind) http.Handler {
+	serve := s.route(configured, func(st *State, r *http.Request) (any, error) {
+		entity, err := st.entityByID(kind, r)
+		if err != nil {
+			return nil, err
+		}
+		switch r.Method {
+		case http.MethodGet:
+			if st.FailingWebhookReads > 0 {
+				st.FailingWebhookReads--
+				return nil, &apiError{http.StatusInternalServerError, "Server error", ""}
+			}
+			if entity.Webhook == nil {
+				return nil, notFound()
+			}
+		case http.MethodPost:
+			install, err := decode[params.InstallWebhookParams](r)
+			if err != nil {
+				return nil, err
+			}
+			if entity.Webhook != nil {
+				return nil, conflict("hook already installed")
+			}
+			entity.Webhook = &params.HookInfo{
+				ID: int64(st.newID()), URL: st.Controller.WebhookURL, Active: true,
+				Events: []string{"workflow_job"}, InsecureSSL: install.InsecureSSL,
+			}
+		case http.MethodDelete:
+			entity.Webhook = nil
+			return nil, nil
+		}
+		return *entity.Webhook, nil
+	})
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.mu.Lock()
+		managed := s.state.ManageWebhooks && kind != garm.Enterprise
+		s.mu.Unlock()
+		if !managed {
+			http.NotFound(w, r)
+			return
+		}
+		serve.ServeHTTP(w, r)
+	})
 }

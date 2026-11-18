@@ -327,6 +327,12 @@ func TestValidate(t *testing.T) {
 			},
 			wantErr: "gitea.repositories.owner/repo.scale_sets: Gitea has no scale sets",
 		},
+		"enterprise with webhook": {
+			change: func(c *Config) {
+				c.GitHub.Enterprises = map[string]Entity{"corp": {CredentialsName: "main", InstallWebhook: true}}
+			},
+			wantErr: "github.enterprises.corp.install_webhook: garm cannot install webhooks for enterprises",
+		},
 		"pool rejected by garm": {
 			change:  withPool("coco", func(p *Pool) { p.MinIdleRunners = 3 }),
 			wantErr: "github.organizations.my-org.pools.coco: min_idle_runners cannot be larger than max_runners",

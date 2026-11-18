@@ -3,9 +3,11 @@ package reconcile
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/cloudbase/garm/params"
 
@@ -76,6 +78,9 @@ func (r *Reconciler) ensureEntities(ctx context.Context, f *forge) error {
 			want := declared[name]
 			id, err := r.ensureEntity(ctx, f, kind, name, want, existing)
 			if err != nil {
+				return err
+			}
+			if err := r.ensureWebhook(ctx, f, kind, name, id, want); err != nil {
 				return err
 			}
 			if err := r.ensurePools(ctx, f, kind, name, id, want.Pools); err != nil {
@@ -183,4 +188,60 @@ func poolBalancer(t params.PoolBalancerType) params.PoolBalancerType {
 		return params.PoolBalancerTypeRoundRobin
 	}
 	return t
+}
+
+// ensureWebhook installs or removes the webhook of an entity. entityID is
+// empty in a dry run that would create the entity.
+func (r *Reconciler) ensureWebhook(ctx context.Context, f *forge, kind garm.EntityKind, name, entityID string, want config.Entity) error {
+	// Garm has no webhooks for enterprises.
+	if kind == garm.Enterprise {
+		return nil
+	}
+	install := Change{Action: Create, Kind: f.kind("webhook"), Name: name}
+	if entityID == "" {
+		if want.InstallWebhook {
+			r.opts.Report(install)
+		}
+		return nil
+	}
+
+	_, err := r.getWebhook(ctx, kind, entityID)
+	installed := err == nil
+	switch {
+	case errors.Is(err, garm.ErrNoWebhooks) && !want.InstallWebhook:
+		return nil
+	case err != nil && !garm.IsNotFound(err):
+		return fmt.Errorf("reading the %s of %s: %w", f.kind("webhook"), name, err)
+	}
+
+	switch {
+	case want.InstallWebhook && !installed:
+		return r.apply(install, func() error {
+			return r.client.InstallWebhook(ctx, kind, entityID, params.InstallWebhookParams{})
+		})
+	case !want.InstallWebhook && installed:
+		return r.apply(Change{Action: Delete, Kind: f.kind("webhook"), Name: name}, func() error {
+			return r.client.UninstallWebhook(ctx, kind, entityID)
+		})
+	}
+	return nil
+}
+
+// getWebhook reads the webhook of an entity from its forge. Garm starts
+// using credentials a moment after they were updated, and fails to reach the
+// forge with the previous ones if those were revoked, so failures get a few
+// more attempts.
+func (r *Reconciler) getWebhook(ctx context.Context, kind garm.EntityKind, entityID string) (params.HookInfo, error) {
+	const attempts = 5
+	for attempt := 1; ; attempt++ {
+		hook, err := r.client.GetWebhook(ctx, kind, entityID)
+		if !garm.IsServerError(err) || attempt == attempts {
+			return hook, err
+		}
+		select {
+		case <-ctx.Done():
+			return hook, ctx.Err()
+		case <-time.After(min(r.opts.PollInterval, time.Second)):
+		}
+	}
 }

@@ -129,7 +129,11 @@ func (f Forge) validate(path string, p *problems) {
 		f.validateEntity(fmt.Sprintf("%s.organizations.%s", path, name), f.Organizations[name], p)
 	}
 	for _, name := range sortedKeys(f.Enterprises) {
-		f.validateEntity(fmt.Sprintf("%s.enterprises.%s", path, name), f.Enterprises[name], p)
+		entityPath := fmt.Sprintf("%s.enterprises.%s", path, name)
+		if f.Enterprises[name].InstallWebhook {
+			p.addf("%s.install_webhook: garm cannot install webhooks for enterprises", entityPath)
+		}
+		f.validateEntity(entityPath, f.Enterprises[name], p)
 	}
 }
 

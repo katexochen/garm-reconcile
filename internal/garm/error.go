@@ -52,10 +52,32 @@ func IsNotFound(err error) bool {
 	return errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound
 }
 
+// IsServerError reports whether garm failed to serve a request, which
+// includes failures of the forge it talks to.
+func IsServerError(err error) bool {
+	var apiErr *Error
+	return errors.As(err, &apiErr) && apiErr.StatusCode >= http.StatusInternalServerError
+}
+
 // IsBadRequest reports whether garm rejected a request with HTTP 400, which
 // includes requests that are not possible in the current state of a
 // resource.
 func IsBadRequest(err error) bool {
 	var apiErr *Error
 	return errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusBadRequest
+}
+
+// ErrNoWebhooks is returned by the webhook calls if garm does not manage
+// webhooks, which is the case unless enable_webhook_management is set in its
+// configuration.
+var ErrNoWebhooks = errors.New("garm is not configured to manage webhooks")
+
+// webhookError recognizes that garm does not manage webhooks. It does not
+// serve the endpoints then, so the error does not come from the API.
+func webhookError(err error) error {
+	var apiErr *Error
+	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound && apiErr.Code == "" {
+		return ErrNoWebhooks
+	}
+	return err
 }

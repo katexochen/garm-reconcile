@@ -38,6 +38,10 @@ the workaround named with it can go.
   `tools_metadata_url` to garm's default other than by sending the default,
   which clients then have to know. `pool_balancer_type` of an entity cannot
   be set back to empty.
+- **New credentials take effect a moment after the update returns.** A
+  request that needs the forge right after it, like reading a webhook, fails
+  with HTTP 500 if the previous token was revoked. Workaround: `getWebhook`
+  retries.
 - **Updating credentials always notifies.** `UpdateGithubCredentials` rewrites
   the payload and notifies watchers even if the token is the same. Entities
   compare the webhook secret first, credentials could do the same.

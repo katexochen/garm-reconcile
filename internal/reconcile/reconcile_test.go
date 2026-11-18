@@ -76,6 +76,12 @@ type run struct {
 	pollInterval time.Duration
 }
 
+// with returns the run for another desired state.
+func (r run) with(cfg *config.Config) run {
+	r.cfg = cfg
+	return r
+}
+
 func (r run) reconciler(t *testing.T) (*reconcile.Reconciler, *[]string) {
 	t.Helper()
 	client, err := garm.NewClient(r.srv.URL)
