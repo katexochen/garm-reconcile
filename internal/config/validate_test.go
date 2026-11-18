@@ -1,0 +1,186 @@
+package config
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/cloudbase/garm/params"
+)
+
+func validConfig() *Config {
+	return &Config{
+		Admin: Admin{Username: "admin", Email: "admin@example.com", Password: "hunter2"},
+		Controller: Controller{
+			MetadataURL: "http://garm/api/v1/metadata",
+			CallbackURL: "http://garm/api/v1/callbacks",
+			AgentURL:    "http://garm/agent",
+		},
+		GitHub: Forge{
+			Credentials: map[string]Credentials{
+				"main": {Endpoint: "github.com", PAT: &PAT{OAuth2Token: "ghp_token"}},
+			},
+			Repositories: map[string]Entity{
+				"owner/repo": {CredentialsName: "main"},
+			},
+			Organizations: map[string]Entity{
+				"my-org": {
+					CredentialsName: "main",
+					Pools:           map[string]params.CreatePoolParams{"coco": validPool()},
+				},
+			},
+		},
+	}
+}
+
+func validPool() params.CreatePoolParams {
+	return params.CreatePoolParams{
+		ProviderName: "incus",
+		Image:        "ubuntu",
+		Flavor:       "default",
+		OSType:       "linux",
+		OSArch:       "amd64",
+		Tags:         []string{"coco"},
+		MaxRunners:   2,
+	}
+}
+
+func TestValidate(t *testing.T) {
+	if err := validConfig().Validate(); err != nil {
+		t.Fatalf("valid desired state rejected: %v", err)
+	}
+
+	withPool := func(name string, change func(*params.CreatePoolParams)) func(*Config) {
+		return func(c *Config) {
+			pool := validPool()
+			change(&pool)
+			c.GitHub.Organizations["my-org"].Pools[name] = pool
+		}
+	}
+	withCredentials := func(creds Credentials) func(*Config) {
+		return func(c *Config) { c.GitHub.Credentials["main"] = creds }
+	}
+
+	tests := map[string]struct {
+		change  func(*Config)
+		wantErr string
+	}{
+		"missing admin username": {
+			change:  func(c *Config) { c.Admin.Username = "" },
+			wantErr: "admin.username: must be set",
+		},
+		"missing admin email": {
+			change:  func(c *Config) { c.Admin.Email = "" },
+			wantErr: "admin.email: must be set",
+		},
+		"missing admin password": {
+			change:  func(c *Config) { c.Admin.Password = "" },
+			wantErr: "admin.password: must be set",
+		},
+		"missing metadata URL": {
+			change:  func(c *Config) { c.Controller.MetadataURL = "" },
+			wantErr: "controller.metadata_url: must be set",
+		},
+		"relative callback URL": {
+			change:  func(c *Config) { c.Controller.CallbackURL = "/api/v1/callbacks" },
+			wantErr: `controller.callback_url: "/api/v1/callbacks" is not an absolute URL`,
+		},
+		"invalid webhook URL": {
+			change:  func(c *Config) { c.Controller.WebhookURL = "garm" },
+			wantErr: `controller.webhook_url: "garm" is not an absolute URL`,
+		},
+		"credentials without endpoint": {
+			change:  withCredentials(Credentials{PAT: &PAT{OAuth2Token: "ghp_token"}}),
+			wantErr: "github.credentials.main.endpoint: must be set",
+		},
+		"credentials without authentication": {
+			change:  withCredentials(Credentials{Endpoint: "github.com"}),
+			wantErr: "github.credentials.main: one of pat or app must be set",
+		},
+		"credentials with both authentication types": {
+			change:  withCredentials(Credentials{Endpoint: "github.com", PAT: &PAT{OAuth2Token: "t"}, App: &App{}}),
+			wantErr: "github.credentials.main: pat and app are mutually exclusive",
+		},
+		"empty token": {
+			change:  withCredentials(Credentials{Endpoint: "github.com", PAT: &PAT{}}),
+			wantErr: "github.credentials.main.pat.oauth2_token: must be set",
+		},
+		"incomplete app": {
+			change:  withCredentials(Credentials{Endpoint: "github.com", App: &App{AppID: 1}}),
+			wantErr: "github.credentials.main.app.installation_id: must be set",
+		},
+		"repository without owner": {
+			change:  func(c *Config) { c.GitHub.Repositories["repo"] = Entity{CredentialsName: "main"} },
+			wantErr: "github.repositories.repo: repositories must be named owner/name",
+		},
+		"repository with nested name": {
+			change:  func(c *Config) { c.GitHub.Repositories["a/b/c"] = Entity{CredentialsName: "main"} },
+			wantErr: "github.repositories.a/b/c: repositories must be named owner/name",
+		},
+		"entity without credentials": {
+			change:  func(c *Config) { c.GitHub.Enterprises = map[string]Entity{"corp": {}} },
+			wantErr: "github.enterprises.corp.credentials_name: must be set",
+		},
+		"undeclared credentials": {
+			change:  func(c *Config) { c.GitHub.Repositories["owner/repo"] = Entity{CredentialsName: "other"} },
+			wantErr: `github.repositories.owner/repo.credentials_name: credentials "other" are not declared`,
+		},
+		"unknown pool balancer": {
+			change: func(c *Config) {
+				c.GitHub.Repositories["owner/repo"] = Entity{CredentialsName: "main", PoolBalancerType: "random"}
+			},
+			wantErr: `github.repositories.owner/repo.pool_balancer_type: unknown type "random"`,
+		},
+		"pool name with invalid characters": {
+			change:  withPool("Co_Co", func(*params.CreatePoolParams) {}),
+			wantErr: "github.organizations.my-org.pools.Co_Co: pool names must consist of",
+		},
+		"pool with runner prefix": {
+			change:  withPool("coco", func(p *params.CreatePoolParams) { p.Prefix = "other" }),
+			wantErr: "github.organizations.my-org.pools.coco.runner_prefix: must not be set",
+		},
+		"pool without OS type": {
+			change:  withPool("coco", func(p *params.CreatePoolParams) { p.OSType = "" }),
+			wantErr: "github.organizations.my-org.pools.coco.os_type: must be linux or windows",
+		},
+		"pool with unknown architecture": {
+			change:  withPool("coco", func(p *params.CreatePoolParams) { p.OSArch = "riscv64" }),
+			wantErr: "github.organizations.my-org.pools.coco.os_arch: must be amd64, arm64 or arm",
+		},
+		"names that only differ in case": {
+			change:  func(c *Config) { c.GitHub.Organizations["My-Org"] = Entity{CredentialsName: "main"} },
+			wantErr: "github.organizations: My-Org and my-org only differ in case",
+		},
+		"empty name": {
+			change: func(c *Config) {
+				c.GitHub.Credentials[""] = Credentials{Endpoint: "github.com", PAT: &PAT{OAuth2Token: "t"}}
+			},
+			wantErr: "github.credentials: names must not be empty",
+		},
+		"pool rejected by garm": {
+			change:  withPool("coco", func(p *params.CreatePoolParams) { p.MinIdleRunners = 3 }),
+			wantErr: "github.organizations.my-org.pools.coco: min_idle_runners cannot be larger than max_runners",
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			cfg := validConfig()
+			tt.change(cfg)
+			err := cfg.Validate()
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("Validate() = %v, want it to contain %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidateReportsAllProblems(t *testing.T) {
+	cfg := validConfig()
+	cfg.Admin.Username = ""
+	cfg.Controller.AgentURL = ""
+	err := cfg.Validate()
+	for _, want := range []string{"admin.username", "controller.agent_url"} {
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("Validate() = %v, want it to mention %s", err, want)
+		}
+	}
+}
