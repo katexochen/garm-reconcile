@@ -1,0 +1,342 @@
+package garm_test
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"reflect"
+	"strings"
+	"testing"
+
+	commonparams "github.com/cloudbase/garm-provider-common/params"
+	"github.com/cloudbase/garm/params"
+
+	"github.com/katexochen/garm-reconcile/internal/garm"
+	"github.com/katexochen/garm-reconcile/internal/garm/garmtest"
+)
+
+var admin = params.NewUserParams{Username: "admin", Email: "admin@example.com", Password: "hunter2"}
+
+func ptr[T any](v T) *T { return &v }
+
+func newClient(t *testing.T, srv *garmtest.Server) *garm.Client {
+	t.Helper()
+	client, err := garm.NewClient(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return client
+}
+
+// configuredClient returns a client that is logged in to an initialized
+// controller with its URLs set.
+func configuredClient(t *testing.T) (*garm.Client, *garmtest.Server) {
+	t.Helper()
+	ctx := context.Background()
+	srv := garmtest.NewServer(t)
+	client := newClient(t, srv)
+	if err := client.FirstRun(ctx, admin); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Login(ctx, admin.Username, admin.Password); err != nil {
+		t.Fatal(err)
+	}
+	err := client.UpdateController(ctx, params.UpdateControllerParams{
+		MetadataURL: ptr("http://garm/api/v1/metadata"),
+		CallbackURL: ptr("http://garm/api/v1/callbacks"),
+		AgentURL:    ptr("http://garm/agent"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return client, srv
+}
+
+func TestNewClientRejectsRelativeURL(t *testing.T) {
+	for _, url := range []string{"", "localhost:9997", "/api"} {
+		if _, err := garm.NewClient(url); err == nil {
+			t.Errorf("NewClient(%q) succeeded, want an error", url)
+		}
+	}
+}
+
+func TestInitialization(t *testing.T) {
+	ctx := context.Background()
+	srv := garmtest.NewServer(t)
+	client := newClient(t, srv)
+
+	err := client.Login(ctx, admin.Username, admin.Password)
+	if !garm.IsNotInitialized(err) {
+		t.Fatalf("Login() before the first run: error = %v, want not initialized", err)
+	}
+	if err := client.FirstRun(ctx, admin); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.FirstRun(ctx, admin); err == nil || garm.IsNotInitialized(err) {
+		t.Errorf("second FirstRun(): error = %v, want a conflict", err)
+	}
+
+	if _, err := client.ControllerInfo(ctx); err == nil {
+		t.Error("ControllerInfo() succeeded without logging in")
+	}
+	err = client.Login(ctx, admin.Username, "wrong")
+	var apiErr *garm.Error
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusUnauthorized {
+		t.Errorf("Login() with a wrong password: error = %v, want HTTP 401", err)
+	}
+	if err := client.Login(ctx, admin.Username, admin.Password); err != nil {
+		t.Fatal(err)
+	}
+
+	// Everything but the controller settings is unavailable until the
+	// controller URLs are set.
+	if _, err := client.ListGithubCredentials(ctx); err == nil {
+		t.Error("ListGithubCredentials() succeeded without controller URLs")
+	}
+	update := params.UpdateControllerParams{
+		MetadataURL: ptr("http://garm/api/v1/metadata"),
+		CallbackURL: ptr("http://garm/api/v1/callbacks"),
+		AgentURL:    ptr("http://garm/agent"),
+	}
+	if err := client.UpdateController(ctx, update); err != nil {
+		t.Fatal(err)
+	}
+	info, err := client.ControllerInfo(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.MetadataURL != *update.MetadataURL || info.CallbackURL != *update.CallbackURL || info.AgentURL != *update.AgentURL {
+		t.Errorf("ControllerInfo() = %+v, want the URLs of %+v", info, update)
+	}
+	if _, err := client.ListGithubCredentials(ctx); err != nil {
+		t.Errorf("ListGithubCredentials() with controller URLs: %v", err)
+	}
+}
+
+func TestCredentials(t *testing.T) {
+	ctx := context.Background()
+	client, srv := configuredClient(t)
+
+	create := params.CreateGithubCredentialsParams{
+		Name:     "main",
+		Endpoint: "github.com",
+		AuthType: params.ForgeAuthTypePAT,
+		PAT:      params.GithubPAT{OAuth2Token: "ghp_old"},
+	}
+	if err := client.CreateGithubCredentials(ctx, create); err != nil {
+		t.Fatal(err)
+	}
+	creds, err := client.ListGithubCredentials(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(creds) != 1 || creds[0].Name != "main" || creds[0].Endpoint.Name != "github.com" || creds[0].AuthType != params.ForgeAuthTypePAT {
+		t.Fatalf("ListGithubCredentials() = %+v, want the created credentials", creds)
+	}
+
+	update := params.UpdateGithubCredentialsParams{
+		Description: ptr("rotated"),
+		PAT:         &params.GithubPAT{OAuth2Token: "ghp_new"},
+	}
+	if err := client.UpdateGithubCredentials(ctx, creds[0].ID, update); err != nil {
+		t.Fatal(err)
+	}
+	srv.State(func(st *garmtest.State) {
+		if got := st.Credentials[0]; got.Description != "rotated" || got.PAT.OAuth2Token != "ghp_new" {
+			t.Errorf("credentials after update = %+v, want the new description and token", got)
+		}
+	})
+
+	if err := client.DeleteGithubCredentials(ctx, creds[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	srv.State(func(st *garmtest.State) {
+		if len(st.Credentials) != 0 {
+			t.Errorf("credentials after delete = %+v, want none", st.Credentials)
+		}
+	})
+}
+
+func TestEntitiesAndPools(t *testing.T) {
+	ctx := context.Background()
+	client, srv := configuredClient(t)
+	err := client.CreateGithubCredentials(ctx, params.CreateGithubCredentialsParams{
+		Name: "main", Endpoint: "github.com", AuthType: params.ForgeAuthTypePAT,
+		PAT: params.GithubPAT{OAuth2Token: "ghp_token"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	names := map[garm.EntityKind]garm.CreateEntityParams{
+		garm.Repository:   {Owner: "owner", Name: "repo"},
+		garm.Organization: {Name: "my-org"},
+		garm.Enterprise:   {Name: "corp"},
+	}
+	for kind, create := range names {
+		t.Run(string(kind), func(t *testing.T) {
+			create.CredentialsName = "main"
+			create.WebhookSecret = "secret"
+			create.ForgeType = params.GithubEndpointType
+			created, err := client.CreateEntity(ctx, kind, create)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			entities, err := client.ListEntities(ctx, kind)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := garm.Entity{
+				ID: created.ID, Owner: create.Owner, Name: create.Name, CredentialsName: "main",
+				Endpoint: params.ForgeEndpoint{Name: "github.com", EndpointType: params.GithubEndpointType},
+			}
+			if len(entities) != 1 || !reflect.DeepEqual(entities[0], want) {
+				t.Fatalf("ListEntities() = %+v, want [%+v]", entities, want)
+			}
+
+			update := params.UpdateEntityParams{PoolBalancerType: params.PoolBalancerTypePack, AgentMode: ptr(true)}
+			if err := client.UpdateEntity(ctx, kind, created.ID, update); err != nil {
+				t.Fatal(err)
+			}
+			entities, err = client.ListEntities(ctx, kind)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := entities[0]; got.PoolBalancerType != params.PoolBalancerTypePack || !got.AgentMode {
+				t.Errorf("entity after update = %+v, want pack balancing and agent mode", got)
+			}
+
+			testPools(t, client, srv, kind, created.ID)
+
+			if err := client.DeleteEntity(ctx, kind, created.ID); err != nil {
+				t.Fatal(err)
+			}
+			entities, err = client.ListEntities(ctx, kind)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(entities) != 0 {
+				t.Errorf("ListEntities() after delete = %+v, want none", entities)
+			}
+		})
+	}
+}
+
+func testPools(t *testing.T, client *garm.Client, srv *garmtest.Server, kind garm.EntityKind, entityID string) {
+	t.Helper()
+	ctx := context.Background()
+	create := params.CreatePoolParams{
+		RunnerPrefix: params.RunnerPrefix{Prefix: "coco"},
+		ProviderName: "incus",
+		Image:        "ubuntu",
+		Flavor:       "default",
+		OSType:       commonparams.Linux,
+		OSArch:       commonparams.Amd64,
+		Tags:         []string{"coco"},
+		MaxRunners:   2,
+		ExtraSpecs:   []byte(`{"disable_updates":true}`),
+	}
+	if err := client.CreateEntityPool(ctx, kind, entityID, create); err != nil {
+		t.Fatal(err)
+	}
+	pools, err := client.ListEntityPools(ctx, kind, entityID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pools) != 1 || pools[0].Prefix != "coco" || pools[0].ProviderName != "incus" {
+		t.Fatalf("ListEntityPools() = %+v, want the created pool", pools)
+	}
+	if pools[0].ExtraSpecs != nil {
+		t.Errorf("listed pool has extra specs %s, which garm leaves out", pools[0].ExtraSpecs)
+	}
+	pool, err := client.GetPool(ctx, pools[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(pool.ExtraSpecs) != `{"disable_updates":true}` {
+		t.Errorf("GetPool() returned the extra specs %s, want the created ones", pool.ExtraSpecs)
+	}
+
+	if err := client.DeleteEntity(ctx, kind, entityID); !garm.IsBadRequest(err) {
+		t.Errorf("DeleteEntity() with a pool: error = %v, want a bad request", err)
+	}
+
+	if err := client.UpdatePool(ctx, pool.ID, params.UpdatePoolParams{MaxRunners: ptr(uint(4))}); err != nil {
+		t.Fatal(err)
+	}
+	pool, err = client.GetPool(ctx, pool.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pool.MaxRunners != 4 {
+		t.Errorf("max_runners after update = %d, want 4", pool.MaxRunners)
+	}
+
+	srv.State(func(st *garmtest.State) {
+		st.Instances = append(st.Instances,
+			&params.Instance{Name: "coco-idle", PoolID: pool.ID, Status: commonparams.InstanceRunning, RunnerStatus: params.RunnerIdle},
+			&params.Instance{Name: "coco-busy", PoolID: pool.ID, Status: commonparams.InstanceRunning, RunnerStatus: params.RunnerActive},
+		)
+	})
+	instances, err := client.ListPoolInstances(ctx, pool.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(instances) != 2 {
+		t.Fatalf("ListPoolInstances() = %+v, want two instances", instances)
+	}
+	if err := client.DeletePool(ctx, pool.ID); !garm.IsBadRequest(err) {
+		t.Errorf("DeletePool() with runners: error = %v, want a bad request", err)
+	}
+	if err := client.DeleteInstance(ctx, "coco-busy"); !garm.IsBadRequest(err) {
+		t.Errorf("DeleteInstance() of a busy runner: error = %v, want a bad request", err)
+	}
+	if err := client.DeleteInstance(ctx, "coco-idle"); err != nil {
+		t.Fatal(err)
+	}
+	srv.State(func(st *garmtest.State) { st.Instances = nil })
+	if err := client.DeletePool(ctx, pool.ID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestErrorMessage(t *testing.T) {
+	ctx := context.Background()
+	client := newClient(t, garmtest.NewServer(t))
+	err := client.Login(ctx, admin.Username, admin.Password)
+	if err == nil || !strings.Contains(err.Error(), "init_required: Missing superuser (HTTP 409)") {
+		t.Errorf("error = %v, want it to describe the API error", err)
+	}
+}
+
+func TestReadOnly(t *testing.T) {
+	ctx := context.Background()
+	client, srv := configuredClient(t)
+	srv.State(func(st *garmtest.State) { st.Mutations = nil })
+
+	client.ReadOnly()
+	if err := client.Login(ctx, admin.Username, admin.Password); err != nil {
+		t.Errorf("Login() with a read-only client: %v", err)
+	}
+	if _, err := client.ListGithubCredentials(ctx); err != nil {
+		t.Errorf("ListGithubCredentials() with a read-only client: %v", err)
+	}
+	err := client.UpdateController(ctx, params.UpdateControllerParams{WebhookURL: ptr("http://garm/webhooks")})
+	if err == nil || !strings.Contains(err.Error(), "refusing PUT controller with a read-only client") {
+		t.Errorf("UpdateController() with a read-only client = %v, want it to be refused", err)
+	}
+	srv.State(func(st *garmtest.State) {
+		if len(st.Mutations) != 0 {
+			t.Errorf("mutations = %v, want none", st.Mutations)
+		}
+	})
+}
+
+func TestNotFound(t *testing.T) {
+	client, _ := configuredClient(t)
+	err := client.DeleteInstance(context.Background(), "missing")
+	if !garm.IsNotFound(err) || garm.IsBadRequest(err) {
+		t.Errorf("DeleteInstance() of a missing instance: error = %v, want not found", err)
+	}
+}
