@@ -11,13 +11,13 @@ let
 
   format = pkgs.formats.json { };
 
-  isSecret = v: lib.isAttrs v && lib.attrNames v == [ "_secret" ] && lib.isString v._secret;
+  isSecret = v: lib.isAttrs v && lib.attrNames v == [ "_secret" ];
 
   # Applies f to the path of every { _secret = "/path"; } in v.
   mapSecrets =
     f: v:
     if isSecret v then
-      f v._secret
+      f (toString v._secret)
     else if lib.isAttrs v then
       lib.mapAttrs (_: mapSecrets f) v
     else if lib.isList v then
@@ -28,7 +28,7 @@ let
   collectSecrets =
     v:
     if isSecret v then
-      [ v._secret ]
+      [ (toString v._secret) ]
     else if lib.isAttrs v then
       lib.concatMap collectSecrets (lib.attrValues v)
     else if lib.isList v then
@@ -39,8 +39,12 @@ let
   secretPaths = lib.unique (collectSecrets cfg.settings);
 
   # The hash keeps files of the same name in different directories apart.
+  # The name is only there for whoever reads the unit.
   credentialName =
-    path: "${lib.substring 0 8 (builtins.hashString "sha256" path)}-${baseNameOf path}";
+    path:
+    "${
+      lib.substring 0 8 (builtins.hashString "sha256" path)
+    }-${lib.strings.sanitizeDerivationName (baseNameOf path)}";
 
   # Secrets are passed as systemd credentials, which garm-reconcile finds by
   # their name. This way the files only need to be readable by root.
@@ -131,7 +135,9 @@ in
           ]
           ++ [ "${checkedStateFile}" ]
         );
-        LoadCredential = map (path: "${credentialName path}:${path}") secretPaths;
+        LoadCredential = map (
+          path: "${credentialName path}:${lib.replaceStrings [ "%" ] [ "%%" ] path}"
+        ) secretPaths;
         DynamicUser = true;
         Restart = "on-failure";
         RestartSec = "10s";

@@ -7,46 +7,50 @@
 {
   name = "garm-reconcile-module";
 
-  nodes.machine = {
-    imports = [ module ];
+  nodes.machine =
+    { pkgs, ... }:
+    {
+      imports = [ module ];
 
-    services.garm = {
-      enable = true;
-      settings = {
-        jwt_auth.secret._secret = "/etc/garm-jwt-secret";
-        database.passphrase._secret = "/etc/garm-db-passphrase";
-      };
-      provision = {
+      services.garm = {
         enable = true;
-        prune = true;
         settings = {
-          admin = {
-            username = "admin";
-            email = "admin@example.com";
-            password._secret = "/etc/garm-admin-password";
-          };
-          controller = {
-            metadata_url = "http://127.0.0.1:9997/api/v1/metadata";
-            callback_url = "http://127.0.0.1:9997/api/v1/callbacks";
-            agent_url = "http://127.0.0.1:9997/agent";
-            webhook_url = "http://127.0.0.1:9997/webhooks";
-          };
-          gitea.endpoints.local = {
-            api_base_url = "http://127.0.0.1:3000";
-            base_url = "http://127.0.0.1:3000";
+          jwt_auth.secret._secret = "/etc/garm-jwt-secret";
+          database.passphrase._secret = "/etc/garm-db-passphrase";
+        };
+        provision = {
+          enable = true;
+          prune = true;
+          settings = {
+            admin = {
+              username = "admin";
+              email = "admin@example.com";
+              password._secret = "/etc/garm-admin-password";
+            };
+            controller = {
+              metadata_url = "http://127.0.0.1:9997/api/v1/metadata";
+              callback_url = "http://127.0.0.1:9997/api/v1/callbacks";
+              agent_url = "http://127.0.0.1:9997/agent";
+              webhook_url = "http://127.0.0.1:9997/webhooks";
+            };
+            gitea.endpoints.local = {
+              api_base_url = "http://127.0.0.1:3000";
+              base_url = "http://127.0.0.1:3000";
+              # A file from the store works like any other.
+              description._secret = pkgs.writeText "description" "read from the store";
+            };
           };
         };
       };
-    };
 
-    environment.etc."garm-jwt-secret".text = "uhAVE3d5hiA4f93yPJcVo5xRbvUSbvVUSLGC8tG8WTzxtqtS";
-    environment.etc."garm-db-passphrase".text = "6ahIZPHobW5SvKR92a8nrahCLsZvWBnD";
-    # Only root can read the password, the service runs as another user.
-    environment.etc."garm-admin-password" = {
-      text = "CbIhvLQTXCCfVROvLcJ2B7A85BGWbasV";
-      mode = "0400";
+      environment.etc."garm-jwt-secret".text = "uhAVE3d5hiA4f93yPJcVo5xRbvUSbvVUSLGC8tG8WTzxtqtS";
+      environment.etc."garm-db-passphrase".text = "6ahIZPHobW5SvKR92a8nrahCLsZvWBnD";
+      # Only root can read the password, the service runs as another user.
+      environment.etc."garm-admin-password" = {
+        text = "CbIhvLQTXCCfVROvLcJ2B7A85BGWbasV";
+        mode = "0400";
+      };
     };
-  };
 
   testScript = ''
     machine.wait_for_unit("garm-provision.service")
@@ -56,6 +60,7 @@
         "garm-cli profile add --name garm --url http://127.0.0.1:9997"
         " --username admin --password CbIhvLQTXCCfVROvLcJ2B7A85BGWbasV"
     )
-    machine.succeed("garm-cli gitea endpoint show local")
+    endpoint = machine.succeed("garm-cli gitea endpoint show local")
+    assert "read from the store" in endpoint, f"unexpected endpoint: {endpoint}"
   '';
 }
