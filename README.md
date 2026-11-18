@@ -68,6 +68,12 @@ github:
           provider_name: incus
           image: ubuntu:24.04
           flavor: default
+          os_type: linux
+          os_arch: amd64
+          tags: [coco]
+          max_runners: 4
+          min_idle_runners: 1
+          enabled: true
           template: nixos # optional
       scale_sets:
         coco-set:
@@ -78,12 +84,6 @@ github:
           os_arch: amd64
           max_runners: 4
           enabled: true
-          os_type: linux
-          os_arch: amd64
-          tags: [coco]
-          max_runners: 4
-          min_idle_runners: 1
-          enabled: true
 
   repositories:
     owner/name:
@@ -93,9 +93,9 @@ github:
 ```
 
 Entities take `credentials_name`, `webhook_secret`, `pool_balancer_type`,
-`agent_mode`, `pools` and `scale_sets`. A webhook secret is generated when an entity is
-created without one. Pools take the fields of garm's request to create a pool,
-except for `runner_prefix`.
+`agent_mode`, `pools` and `scale_sets`. A webhook secret is generated when an
+entity is created without one. Pools take the fields of garm's request to
+create a pool, except for `runner_prefix` and `template_id`.
 
 ### Pools
 
@@ -119,15 +119,19 @@ instead, and let `-prune` delete the existing one.
 
 ### Templates
 
-A template is the script that installs the runner on a new instance. Pools name
-their template in `template`, which can be a declared template or one that garm
-ships, like `github_linux`. `template_id` of the garm API is not accepted.
-Templates that garm ships are never changed or deleted. The OS type of a
-template cannot be changed.
+A template is the script that installs the runner on a new instance. Pools and
+scale sets name their template in `template`. That is either a declared
+template or one that garm ships, like `github_linux`. A declared template takes
+precedence over a shipped one of the same name. Without `template`, the
+template garm ships for the OS is used.
 
-garm chooses `runner_bootstrap_timeout` and the template for pools that are
-created without them. Removing them from a declared pool leaves the values the
-pool has.
+Templates that garm ships are never changed or deleted. Templates that exist
+in garm without being declared cannot be used, as `-prune` deletes them. The OS
+type of a template cannot be changed.
+
+garm chooses `runner_bootstrap_timeout` for pools and scale sets that are
+created without one. Removing it from the desired state leaves the value as it
+is.
 
 ### Secrets
 
@@ -154,8 +158,8 @@ controller and to log in. Changing it afterwards is not supported.
 A pool or scale set that has runners cannot be deleted. garm-reconcile disables
 it, removes its idle runners and waits for the remaining ones to finish their jobs.
 It never removes a runner that executes a job. `-drain-timeout` limits how long
-the second phase may take. When it expires, `apply` fails and the pools stay
-disabled until the next run deletes them. Waiting cannot outlast the lifetime
+the second phase may take. When it expires, `apply` fails and the pools and
+scale sets stay disabled until the next run deletes them. Waiting cannot outlast the lifetime
 of garm's API tokens (`jwt_auth.time_to_live`) either. An interrupted `apply`
 continues where it left off when run again.
 
@@ -205,5 +209,5 @@ updating that dependency, `TestEnsureCoversAllPoolFields` and
 `TestEnsureCoversAllScaleSetFields` fail if garm added a setting that is not
 reconciled yet.
 
-garm talks to GitHub whenever a scale set is created, updated or deleted, so
-scale sets are only tested against the fake of the unit tests.
+garm talks to GitHub when a scale set is created or deleted, so scale sets are
+only tested against the fake of the unit tests.

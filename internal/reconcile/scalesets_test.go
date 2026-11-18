@@ -62,7 +62,6 @@ func TestScaleSets(t *testing.T) {
 	changed.MaxRunners = 4
 	changed.Enabled = false
 	changed.Prefix = "runner"
-	changed.Template = "github_linux"
 	changed.ExtraSpecs = json.RawMessage(`{"disable_updates":true}`)
 	cfg.GitHub.Organizations["my-org"].ScaleSets["coco-set"] = changed
 	want := []string{"update scale set my-org/coco-set (enabled, extra_specs, max_runners, runner_prefix)"}
@@ -210,4 +209,96 @@ func TestEnsureCoversAllScaleSetFields(t *testing.T) {
 	changes := run{srv: srv, cfg: cfg}.ensure(t)
 	assertEqual(t, "changes", changes, []string{"update scale set my-org/coco-set (" + strings.Join(fields, ", ") + ")"})
 	assertEqual(t, "changes after updating the scale set", run{srv: srv, cfg: cfg}.ensure(t), nil)
+}
+
+func TestScaleSetTemplate(t *testing.T) {
+	cfg := withScaleSet()
+	srv := initialized(t, cfg)
+
+	cfg.GitHub.Templates = map[string]config.Template{"nixos": {OSType: "linux", Data: "#!/bin/sh"}}
+	set := scaleSet()
+	set.Template = "nixos"
+	cfg.GitHub.Organizations["my-org"].ScaleSets["coco-set"] = set
+	changes := run{srv: srv, cfg: cfg}.ensure(t)
+	assertEqual(t, "changes", changes, []string{
+		"create github template nixos",
+		"update scale set my-org/coco-set (template_id)",
+	})
+	srv.State(func(st *garmtest.State) {
+		assertEqual(t, "template", st.ScaleSets[0].TemplateName, "nixos")
+	})
+
+	set.Template = "missing"
+	cfg.GitHub.Organizations["my-org"].ScaleSets["coco-set"] = set
+	rec, _ := run{srv: srv, cfg: cfg}.reconciler(t)
+	err := rec.Ensure(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "scale set my-org/coco-set: template missing is neither declared") {
+		t.Errorf("Ensure() = %v, want it to report the unknown template", err)
+	}
+}
+
+func TestScaleSetExtraSpecsAndLabels(t *testing.T) {
+	cfg := withScaleSet()
+	set := scaleSet()
+	set.Labels = []string{"coco", "linux"}
+	set.ExtraSpecs = json.RawMessage(`{"disable_updates":true}`)
+	cfg.GitHub.Organizations["my-org"].ScaleSets["coco-set"] = set
+	srv := initialized(t, cfg)
+	// Garm keeps the spelling a label was first created with.
+	srv.State(func(st *garmtest.State) {
+		st.ScaleSets[0].Tags = []params.Tag{{Name: "Linux"}, {Name: "coco"}}
+	})
+	assertEqual(t, "changes", run{srv: srv, cfg: cfg}.ensure(t), nil)
+
+	set.ExtraSpecs = nil
+	cfg.GitHub.Organizations["my-org"].ScaleSets["coco-set"] = set
+	assertEqual(t, "changes", run{srv: srv, cfg: cfg}.ensure(t), []string{"update scale set my-org/coco-set (extra_specs)"})
+	srv.State(func(st *garmtest.State) {
+		assertEqual(t, "extra specs", string(st.ScaleSets[0].ExtraSpecs), "{}")
+	})
+	assertEqual(t, "changes of the second run", run{srv: srv, cfg: cfg}.ensure(t), nil)
+}
+
+func TestDryRunWithNewEntityAndScaleSet(t *testing.T) {
+	srv := initialized(t, desiredState())
+	cfg := desiredState()
+	cfg.GitHub.Organizations["new-org"] = config.Entity{
+		CredentialsName: "main",
+		ScaleSets:       map[string]config.ScaleSet{"coco-set": scaleSet()},
+	}
+	changes := run{srv: srv, cfg: cfg, dryRun: true}.ensure(t)
+	assertEqual(t, "changes", changes, []string{"create organization new-org", "create scale set new-org/coco-set"})
+}
+
+func TestEnsureRejectsAmbiguousScaleSets(t *testing.T) {
+	cfg := withScaleSet()
+	srv := initialized(t, cfg)
+	srv.State(func(st *garmtest.State) {
+		duplicate := *st.ScaleSets[0]
+		duplicate.ID = 1000
+		duplicate.GitHubRunnerGroup = "other"
+		st.ScaleSets = append(st.ScaleSets, &duplicate)
+	})
+
+	rec, _ := run{srv: srv, cfg: cfg}.reconciler(t)
+	err := rec.Ensure(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "scale set my-org/coco-set: 2 scale sets share this name") {
+		t.Errorf("Ensure() = %v, want it to reject the duplicate scale sets", err)
+	}
+}
+
+func TestPruneReportsScaleSetThatGarmKeeps(t *testing.T) {
+	cfg := withScaleSet()
+	srv := initialized(t, cfg)
+	srv.State(func(st *garmtest.State) { st.KeepDeletedScaleSets = true })
+	delete(cfg.GitHub.Organizations["my-org"].ScaleSets, "coco-set")
+
+	rec, _ := run{srv: srv, cfg: cfg}.reconciler(t)
+	if err := rec.Ensure(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	err := rec.Prune(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "delete scale set my-org/coco-set: garm did not delete the scale set") {
+		t.Errorf("Prune() = %v, want it to notice that the scale set still exists", err)
+	}
 }

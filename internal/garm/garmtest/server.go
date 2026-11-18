@@ -35,6 +35,10 @@ type State struct {
 	Pools       []*params.Pool
 	ScaleSets   []*params.ScaleSet
 	Instances   []*params.Instance
+	// KeepDeletedScaleSets makes the controller answer requests to delete
+	// a scale set with success without deleting it, which is what garm
+	// does when GitHub fails to delete its side.
+	KeepDeletedScaleSets bool
 	// Mutations lists the requests that changed the state, as
 	// "METHOD /path".
 	Mutations []string
@@ -68,7 +72,7 @@ type Server struct {
 func NewServer(t *testing.T) *Server {
 	t.Helper()
 	s := &Server{state: State{Entities: map[garm.EntityKind][]*Entity{}}}
-	// Garm ships templates, which nobody can change.
+	// Garm ships templates.
 	s.state.Templates = []*params.Template{{
 		ID: s.state.newID(), Name: "github_linux", OSType: commonparams.Linux,
 		ForgeType: params.GithubEndpointType, Owner: params.SystemUser, Data: []byte("#!/bin/sh"),
@@ -440,9 +444,6 @@ func (st *State) updateTemplate(r *http.Request) (any, error) {
 	if template == nil {
 		return nil, notFound()
 	}
-	if template.Owner == params.SystemUser {
-		return nil, badRequest("cannot edit system templates")
-	}
 	update, err := decode[params.UpdateTemplateParams](r)
 	if err != nil {
 		return nil, err
@@ -459,9 +460,6 @@ func (st *State) deleteTemplate(r *http.Request) (any, error) {
 	template := st.templateByID(r.PathValue("id"))
 	if template == nil {
 		return nil, nil
-	}
-	if template.Owner == params.SystemUser {
-		return nil, badRequest("cannot delete system templates")
 	}
 	for _, p := range st.Pools {
 		if p.TemplateID == template.ID {
@@ -651,7 +649,7 @@ func createEntityPool(kind garm.EntityKind) handler {
 			return nil, badRequest("invalid OS type %s", create.OSType)
 		}
 		pool := &params.Pool{
-			RunnerPrefix:           create.RunnerPrefix,
+			RunnerPrefix:           params.RunnerPrefix{Prefix: create.GetRunnerPrefix()},
 			ID:                     fmt.Sprintf("pool-%d", st.newID()),
 			ProviderName:           create.ProviderName,
 			MaxRunners:             create.MaxRunners,
@@ -682,6 +680,9 @@ func createEntityPool(kind garm.EntityKind) handler {
 		template := st.templateByID(formatID(*create.TemplateID))
 		if template == nil {
 			return nil, badRequest("failed to find suitable template")
+		}
+		if template.OSType != create.OSType {
+			return nil, badRequest("selected template OS type (%s) and OS type (%s) do not match", template.OSType, create.OSType)
 		}
 		pool.TemplateID, pool.TemplateName = template.ID, template.Name
 		switch kind {
@@ -869,7 +870,7 @@ func createEntityScaleSet(kind garm.EntityKind) handler {
 			}
 		}
 		set := &params.ScaleSet{
-			RunnerPrefix:           create.RunnerPrefix,
+			RunnerPrefix:           params.RunnerPrefix{Prefix: create.GetRunnerPrefix()},
 			ID:                     st.newID(),
 			Name:                   create.Name,
 			DisableUpdate:          create.DisableUpdate,
@@ -904,6 +905,9 @@ func createEntityScaleSet(kind garm.EntityKind) handler {
 		template := st.templateByID(formatID(*create.TemplateID))
 		if template == nil {
 			return nil, badRequest("failed to find suitable template")
+		}
+		if template.OSType != create.OSType {
+			return nil, badRequest("selected template OS type (%s) and OS type (%s) do not match", template.OSType, create.OSType)
 		}
 		set.TemplateID, set.TemplateName = template.ID, template.Name
 		switch kind {
@@ -999,6 +1003,9 @@ func (st *State) deleteScaleSet(r *http.Request) (any, error) {
 	if set.Enabled {
 		return nil, badRequest("scale set is enabled; disable it first")
 	}
+	if st.KeepDeletedScaleSets {
+		return nil, nil
+	}
 	st.ScaleSets = slices.DeleteFunc(st.ScaleSets, func(s *params.ScaleSet) bool { return s == set })
 	return nil, nil
 }
@@ -1006,7 +1013,7 @@ func (st *State) deleteScaleSet(r *http.Request) (any, error) {
 func (st *State) listScaleSetInstances(r *http.Request) (any, error) {
 	set := st.scaleSetByID(r)
 	if set == nil {
-		return nil, notFound()
+		return []params.Instance{}, nil
 	}
 	return st.scaleSetInstances(set.ID), nil
 }

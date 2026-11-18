@@ -134,7 +134,7 @@ func (c *Client) UpdateTemplate(ctx context.Context, id uint, update params.Upda
 }
 
 // DeleteTemplate deletes a template. Garm rejects the request with a bad
-// request error while pools use the template.
+// request error while pools or scale sets use the template.
 func (c *Client) DeleteTemplate(ctx context.Context, id uint) error {
 	return c.do(ctx, http.MethodDelete, nil, nil, "templates", formatID(id))
 }

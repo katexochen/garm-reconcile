@@ -86,6 +86,10 @@ func TestValidate(t *testing.T) {
 			change:  func(c *Config) { c.Admin.Username = "" },
 			wantErr: "admin.username: must be set",
 		},
+		"admin named like garm itself": {
+			change:  func(c *Config) { c.Admin.Username = "system" },
+			wantErr: "admin.username: system is reserved by garm",
+		},
 		"missing admin email": {
 			change:  func(c *Config) { c.Admin.Email = "" },
 			wantErr: "admin.email: must be set",
@@ -212,6 +216,10 @@ func TestValidate(t *testing.T) {
 		"scale set without architecture": {
 			change:  withScaleSet(func(s *ScaleSet) { s.OSArch = "" }),
 			wantErr: "github.organizations.my-org.scale_sets.coco-set.os_arch: must be amd64, arm64 or arm",
+		},
+		"scale set without OS type": {
+			change:  withScaleSet(func(s *ScaleSet) { s.OSType = "" }),
+			wantErr: "github.organizations.my-org.scale_sets.coco-set.os_type: must be linux or windows",
 		},
 		"scale set rejected by garm": {
 			change:  withScaleSet(func(s *ScaleSet) { s.Image = "" }),

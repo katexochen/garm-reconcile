@@ -38,13 +38,11 @@ func (r *Reconciler) ensurePools(ctx context.Context, kind garm.EntityKind, enti
 		want := declared[prefix].CreatePoolParams
 		want.Prefix = prefix
 		name := entityName + "/" + prefix
-		if template := declared[prefix].Template; template != "" {
-			id, err := r.templateID(template)
-			if err != nil {
-				return fmt.Errorf("%s %s: %w", KindPool, name, err)
-			}
-			want.TemplateID = &id
+		id, err := r.templateID(declared[prefix].Template, want.OSType)
+		if err != nil {
+			return fmt.Errorf("%s %s: %w", KindPool, name, err)
 		}
+		want.TemplateID = &id
 
 		var matches []params.Pool
 		for _, pool := range existing {
@@ -52,7 +50,6 @@ func (r *Reconciler) ensurePools(ctx context.Context, kind garm.EntityKind, enti
 				matches = append(matches, pool)
 			}
 		}
-		var err error
 		switch len(matches) {
 		case 0:
 			err = r.apply(Change{Action: Create, Kind: KindPool, Name: name}, func() error {
@@ -111,14 +108,11 @@ func poolDiff(want params.CreatePoolParams, pool params.Pool) ([]string, error) 
 		have.Tags = append(have.Tags, tag.Name)
 	}
 
-	// Garm picks these when a pool is created without them, and offers
-	// no way to go back to its choice. Not declaring them therefore leaves
-	// them as they are.
+	// Garm picks the timeout when a pool is created without one, and
+	// offers no way to go back to its choice. Not declaring it therefore
+	// leaves it as it is.
 	if want.RunnerBootstrapTimeout == 0 {
 		have.RunnerBootstrapTimeout = 0
-	}
-	if want.TemplateID == nil {
-		have.TemplateID = nil
 	}
 	want.Tags, have.Tags = tagSet(want.Tags), tagSet(have.Tags)
 	want.ExtraSpecs, have.ExtraSpecs = extraSpecs(want.ExtraSpecs), extraSpecs(have.ExtraSpecs)

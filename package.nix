@@ -13,6 +13,8 @@ buildGoModule {
     fileset = lib.fileset.unions [
       ./go.mod
       ./go.sum
+      # Its example is checked by a test.
+      ./README.md
       (lib.fileset.fileFilter (file: file.hasExt "go") ./.)
     ];
   };

@@ -3,7 +3,7 @@
 // Reconciling has two phases. Ensure creates and updates what is declared,
 // after which garm serves the desired state. Prune then removes what is not
 // declared, which can take as long as the jobs that still run on the runners
-// of removed pools.
+// of removed pools and scale sets.
 package reconcile
 
 import (
@@ -89,9 +89,11 @@ type Reconciler struct {
 	cfg    *config.Config
 	opts   Options
 
-	// templates are the templates garm has once Ensure took care of the
-	// declared ones.
-	templates []params.Template
+	// Ensure records what pools and scale sets need to refer to
+	// templates: the IDs of the declared ones by name, and the templates
+	// garm ships.
+	templateIDs      map[string]uint
+	shippedTemplates []params.Template
 }
 
 // New returns a Reconciler that brings the controller behind client to the

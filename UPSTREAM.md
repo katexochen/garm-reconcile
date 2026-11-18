@@ -45,7 +45,7 @@ the workaround named with it can go.
 
 - **A pool with runners cannot be deleted**, and a disabled pool keeps its
   idle runners (`scaleDownOnePool` skips disabled pools). A way to ask garm to
-  drain and delete a pool would replace `prunePools` and `deleteDrained`.
+  drain and delete a pool would replace `pruneRunners` and `deleteDrained`.
 - **A scale set must be disabled before it can be deleted**, in addition to
   having no runners. The same request would cover it.
 
@@ -53,13 +53,28 @@ the workaround named with it can go.
 
 - **Labels and `disable_update` cannot be updated**, although
   `UpdateScaleSetParams` exists. Changing them here is an error.
-- **Every scale set request talks to GitHub.** Creating one looks up the
-  runner group, updating and deleting call the scale set API. None of it can
-  run against a controller without GitHub, so the integration test here does
-  not cover scale sets. Deferring the GitHub side to the scale set worker,
+- **Deleting a scale set can report success without deleting it.** The
+  check in `Runner.DeleteScaleSetByID` is inverted
+  (`if !errors.Is(err, runnerErrors.ErrNotFound) { return nil }`), so any
+  error from GitHub makes garm answer 200 and keep the scale set. Workaround:
+  `deleteScaleSet` reads the scale set back.
+- **Scale set names are not unique.** The model tags `Name` and
+  `GitHubRunnerGroup` with `unique_index:idx_name`, which is gorm v1 syntax
+  and creates no index.
+- **Creating and deleting a scale set talks to GitHub**, as does moving it
+  to another runner group. None of it can run against a controller without
+  GitHub, so the integration test here does not cover scale sets. Deferring the GitHub side to the scale set worker,
   like the state `pending_create` suggests, would make the API testable.
 - **The runner group is `github-runner-group` on create and `runner_group` on
   update.**
+
+## Templates
+
+- **Admins can change and delete the templates garm ships.** Only users that
+  are not admins are refused.
+- **`owner_id` is ambiguous.** Shipped templates report the owner `system`,
+  and so do the templates of an admin user named `system`, which garm accepts.
+  Workaround: that username is rejected here.
 
 ## Validation
 

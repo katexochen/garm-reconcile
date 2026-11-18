@@ -245,3 +245,19 @@ func TestFileSecrets(t *testing.T) {
 		})
 	}
 }
+
+// TestReadmeExample checks that the desired state the README shows is valid.
+func TestReadmeExample(t *testing.T) {
+	readme, err := os.ReadFile("../../README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, example, found := strings.Cut(string(readme), "```yaml\n")
+	example, _, closed := strings.Cut(example, "```")
+	if !found || !closed {
+		t.Fatal("the README has no YAML example")
+	}
+	if _, err := Parse([]byte(example), PlaceholderSecrets); err != nil {
+		t.Errorf("the example of the README is rejected: %v", err)
+	}
+}

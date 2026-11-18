@@ -99,8 +99,10 @@ func (r *Reconciler) deleteDrained(ctx context.Context, sets []runnerSet) ([]run
 				continue
 			}
 			// A runner that picked up a job in the meantime is
-			// protected by the forge, which refuses to remove it. One
-			// that finished its job may be gone already.
+			// protected by the forge, which refuses to remove it. That
+			// is the only protection for runners of a scale set: garm
+			// stops tracking their jobs once the scale set is disabled.
+			// A runner that finished its job may be gone already.
 			err := r.client.DeleteInstance(ctx, instance.Name)
 			if err != nil && !garm.IsBadRequest(err) && !garm.IsNotFound(err) {
 				return nil, fmt.Errorf("removing runner %s of %s %s: %w", instance.Name, set.kind, set.name, err)

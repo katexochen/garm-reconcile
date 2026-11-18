@@ -5,50 +5,54 @@ import (
 	"fmt"
 	"slices"
 
+	commonparams "github.com/cloudbase/garm-provider-common/params"
 	"github.com/cloudbase/garm/params"
 
 	"github.com/katexochen/garm-reconcile/internal/config"
 )
 
+// isShipped reports whether a template comes with garm. Such templates are
+// used, but not managed.
+func isShipped(template params.Template) bool {
+	return template.Owner == params.SystemUser && template.ForgeType == params.GithubEndpointType
+}
+
 // isManagedTemplate reports whether a template is subject to reconciling.
-// The templates garm ships are not, nor are those of other forges.
 func isManagedTemplate(template params.Template) bool {
 	return template.Owner != params.SystemUser && template.ForgeType == params.GithubEndpointType
 }
 
+// ensureTemplates creates and updates the declared templates and records
+// their IDs, by which pools and scale sets refer to them.
 func (r *Reconciler) ensureTemplates(ctx context.Context) error {
 	existing, err := r.client.ListTemplates(ctx)
 	if err != nil {
 		return fmt.Errorf("listing templates: %w", err)
 	}
+	r.shippedTemplates = slices.DeleteFunc(slices.Clone(existing), func(t params.Template) bool { return !isShipped(t) })
+	r.templateIDs = map[string]uint{}
+
 	for _, name := range sortedKeys(r.cfg.GitHub.Templates) {
 		want := r.cfg.GitHub.Templates[name]
 		idx := slices.IndexFunc(existing, func(have params.Template) bool {
 			return isManagedTemplate(have) && have.Name == name
 		})
 		if idx < 0 {
-			err = r.createTemplate(ctx, name, want)
+			// The ID stays 0 in a dry run, which differs from the
+			// template of every existing pool.
+			r.templateIDs[name], err = r.createTemplate(ctx, name, want)
 		} else {
+			r.templateIDs[name] = existing[idx].ID
 			err = r.updateTemplate(ctx, name, want, existing[idx])
 		}
 		if err != nil {
 			return err
 		}
 	}
-
-	// Pools refer to templates by ID, including the ones just created.
-	if r.opts.DryRun {
-		r.templates = existing
-		return nil
-	}
-	r.templates, err = r.client.ListTemplates(ctx)
-	if err != nil {
-		return fmt.Errorf("listing templates: %w", err)
-	}
 	return nil
 }
 
-func (r *Reconciler) createTemplate(ctx context.Context, name string, want config.Template) error {
+func (r *Reconciler) createTemplate(ctx context.Context, name string, want config.Template) (uint, error) {
 	create := params.CreateTemplateParams{
 		Name:        name,
 		Description: want.Description,
@@ -56,10 +60,13 @@ func (r *Reconciler) createTemplate(ctx context.Context, name string, want confi
 		OSType:      want.OSType,
 		ForgeType:   params.GithubEndpointType,
 	}
-	return r.apply(Change{Action: Create, Kind: KindTemplate, Name: name}, func() error {
-		_, err := r.client.CreateTemplate(ctx, create)
+	var id uint
+	err := r.apply(Change{Action: Create, Kind: KindTemplate, Name: name}, func() error {
+		template, err := r.client.CreateTemplate(ctx, create)
+		id = template.ID
 		return err
 	})
+	return id, err
 }
 
 func (r *Reconciler) updateTemplate(ctx context.Context, name string, want config.Template, listed params.Template) error {
@@ -107,20 +114,23 @@ func (r *Reconciler) pruneTemplates(ctx context.Context) error {
 	return nil
 }
 
-// templateID returns the ID of the template a pool names. Declared templates
-// take precedence over the ones garm ships. In a dry run, the ID of a
-// template that is yet to be created is 0.
-func (r *Reconciler) templateID(name string) (uint, error) {
-	for _, managed := range []bool{true, false} {
-		for _, template := range r.templates {
-			if template.Name == name && isManagedTemplate(template) == managed &&
-				template.ForgeType == params.GithubEndpointType {
-				return template.ID, nil
-			}
+// templateID returns the ID of the template a pool or scale set names. A
+// declared template takes precedence over one that garm ships under the
+// same name. Without a name, it is the template garm ships for the OS.
+//
+// Templates that exist in garm without being declared are not eligible:
+// pruning deletes them, which garm refuses while they are in use.
+func (r *Reconciler) templateID(name string, osType commonparams.OSType) (uint, error) {
+	if id, declared := r.templateIDs[name]; declared {
+		return id, nil
+	}
+	for _, template := range r.shippedTemplates {
+		if template.Name == name || (name == "" && template.OSType == osType) {
+			return template.ID, nil
 		}
 	}
-	if _, declared := r.cfg.GitHub.Templates[name]; declared && r.opts.DryRun {
-		return 0, nil
+	if name == "" {
+		return 0, fmt.Errorf("garm ships no template for %s", osType)
 	}
-	return 0, fmt.Errorf("template %s does not exist", name)
+	return 0, fmt.Errorf("template %s is neither declared nor shipped by garm", name)
 }

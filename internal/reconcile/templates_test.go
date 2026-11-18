@@ -83,15 +83,53 @@ func TestTemplates(t *testing.T) {
 	})
 }
 
-func TestTemplateOfPoolIsKeptWhenNotDeclared(t *testing.T) {
+// TestTemplateAndItsReferenceAreRemoved checks that a pool without a
+// template goes back to the one garm ships, as garm does not delete a
+// template that is in use.
+func TestTemplateAndItsReferenceAreRemoved(t *testing.T) {
 	cfg := withTemplate()
 	srv := initialized(t, cfg)
 
+	delete(cfg.GitHub.Templates, "nixos")
 	cfg.GitHub.Organizations["my-org"].Pools["coco"] = pool()
-	assertEqual(t, "changes", run{srv: srv, cfg: cfg}.ensure(t), nil)
+	r := run{srv: srv, cfg: cfg}
+	assertEqual(t, "changes to ensure", r.ensure(t), []string{"update pool my-org/coco (template_id)"})
+	assertEqual(t, "changes to prune", r.prune(t), []string{"delete github template nixos"})
 	srv.State(func(st *garmtest.State) {
-		assertEqual(t, "template of the pool", st.Pools[0].TemplateName, "nixos")
+		assertEqual(t, "template of the pool", st.Pools[0].TemplateName, "github_linux")
 	})
+}
+
+func TestDeclaredTemplateTakesPrecedenceOverShipped(t *testing.T) {
+	cfg := desiredState()
+	shipped := pool()
+	shipped.Template = "github_linux"
+	cfg.GitHub.Organizations["my-org"].Pools["coco"] = shipped
+	srv := initialized(t, cfg)
+
+	cfg.GitHub.Templates = map[string]config.Template{"github_linux": {OSType: "linux", Data: "#!/bin/sh"}}
+	want := []string{"create github template github_linux", "update pool my-org/coco (template_id)"}
+	assertEqual(t, "changes to plan", run{srv: srv, cfg: cfg, dryRun: true}.ensure(t), want)
+	assertEqual(t, "changes", run{srv: srv, cfg: cfg}.ensure(t), want)
+	srv.State(func(st *garmtest.State) {
+		assertEqual(t, "template of the pool", st.Pools[0].TemplateID, findTemplate(t, st, "github_linux").ID)
+		assertEqual(t, "data of the shipped template", string(st.Templates[0].Data), "#!/bin/sh")
+		assertEqual(t, "owner of the shipped template", st.Templates[0].Owner, params.SystemUser)
+	})
+	assertEqual(t, "changes of the second run", run{srv: srv, cfg: cfg}.prune(t), nil)
+}
+
+func TestUndeclaredTemplatesCannotBeUsed(t *testing.T) {
+	cfg := withTemplate()
+	srv := initialized(t, cfg)
+	// The template stays in garm, but pruning would delete it.
+	delete(cfg.GitHub.Templates, "nixos")
+
+	rec, _ := run{srv: srv, cfg: cfg}.reconciler(t)
+	err := rec.Ensure(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "template nixos is neither declared nor shipped by garm") {
+		t.Errorf("Ensure() = %v, want it to reject the undeclared template", err)
+	}
 }
 
 func TestDryRunWithNewTemplate(t *testing.T) {
@@ -116,7 +154,7 @@ func TestTemplateErrors(t *testing.T) {
 
 		rec, _ := run{srv: garmtest.NewServer(t), cfg: cfg}.reconciler(t)
 		err := rec.Ensure(context.Background())
-		if err == nil || !strings.Contains(err.Error(), "pool my-org/coco: template missing does not exist") {
+		if err == nil || !strings.Contains(err.Error(), "pool my-org/coco: template missing is neither declared nor shipped by garm") {
 			t.Errorf("Ensure() = %v, want it to report the unknown template", err)
 		}
 	})
@@ -134,7 +172,7 @@ func TestTemplateErrors(t *testing.T) {
 	})
 }
 
-func TestPruneLeavesTemplatesOfOtherOwners(t *testing.T) {
+func TestPruneLeavesTemplatesOfOtherForges(t *testing.T) {
 	cfg := desiredState()
 	srv := initialized(t, cfg)
 	srv.State(func(st *garmtest.State) {

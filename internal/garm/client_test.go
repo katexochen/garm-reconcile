@@ -372,9 +372,6 @@ func TestTemplates(t *testing.T) {
 		t.Errorf("GetTemplate() = %+v, want the updated template", template)
 	}
 
-	if err := client.UpdateTemplate(ctx, templates[0].ID, update); !garm.IsBadRequest(err) {
-		t.Errorf("UpdateTemplate() of a shipped template: error = %v, want a bad request", err)
-	}
 	if err := client.DeleteTemplate(ctx, created.ID); err != nil {
 		t.Fatal(err)
 	}

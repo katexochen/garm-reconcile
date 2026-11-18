@@ -13,8 +13,8 @@ import (
 	"github.com/cloudbase/garm/params"
 )
 
-// runnerPrefix restricts pool names to what is valid in the runner names
-// garm derives from them.
+// runnerPrefix restricts runner prefixes, and thereby the names of pools, to
+// what is valid in the runner names garm derives from them.
 var runnerPrefix = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
 
 // problems collects everything that is wrong with a desired state, so that
@@ -35,8 +35,12 @@ func (c *Config) Validate() error {
 }
 
 func (a Admin) validate(p *problems) {
-	if a.Username == "" {
+	switch a.Username {
+	case "":
 		p.addf("admin.username: must be set")
+	case params.SystemUser:
+		// Garm reports this name as the owner of what it ships.
+		p.addf("admin.username: %s is reserved by garm", params.SystemUser)
 	}
 	if a.Email == "" {
 		p.addf("admin.email: must be set")
@@ -68,7 +72,6 @@ func validateURL(p *problems, path, value string, required bool) {
 
 func (f Forge) validate(path string, p *problems) {
 	validateNames(p, path+".credentials", f.Credentials)
-	validateNames(p, path+".templates", f.Templates)
 	validateNames(p, path+".repositories", f.Repositories)
 	validateNames(p, path+".organizations", f.Organizations)
 	validateNames(p, path+".enterprises", f.Enterprises)
@@ -176,7 +179,7 @@ func (f Forge) validateEntity(path string, e Entity, p *problems) {
 			p.addf("%s: %w", poolPath, err)
 		}
 		validateOSType(p, poolPath, pool.OSType)
-		f.validateTemplate(p, poolPath, pool.Template, pool.TemplateID, pool.OSType)
+		f.validateTemplateRef(p, poolPath, pool.Template, pool.TemplateID, pool.OSType)
 		validateOSArch(p, poolPath, pool.OSArch)
 	}
 	f.validateScaleSets(path, e, p)
@@ -204,7 +207,7 @@ func (f Forge) validateScaleSets(path string, e Entity, p *problems) {
 		}
 		validateOSType(p, setPath, set.OSType)
 		validateOSArch(p, setPath, set.OSArch)
-		f.validateTemplate(p, setPath, set.Template, set.TemplateID, set.OSType)
+		f.validateTemplateRef(p, setPath, set.Template, set.TemplateID, set.OSType)
 	}
 }
 
@@ -216,8 +219,8 @@ func validateOSArch(p *problems, path string, arch commonparams.OSArch) {
 	}
 }
 
-// validateTemplate checks the template a pool or scale set at path names.
-func (f Forge) validateTemplate(p *problems, path, template string, id *uint, osType commonparams.OSType) {
+// validateTemplateRef checks the template a pool or scale set at path names.
+func (f Forge) validateTemplateRef(p *problems, path, template string, id *uint, osType commonparams.OSType) {
 	if id != nil {
 		p.addf("%s.template_id: must not be set, name the template in template instead", path)
 	}

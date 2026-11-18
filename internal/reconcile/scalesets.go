@@ -3,6 +3,7 @@ package reconcile
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 
@@ -21,7 +22,7 @@ const defaultRunnerGroup = "Default"
 // create the entity.
 func (r *Reconciler) ensureScaleSets(ctx context.Context, kind garm.EntityKind, entityName, entityID string, declared map[string]config.ScaleSet) error {
 	var existing []params.ScaleSet
-	if entityID != "" && len(declared) > 0 {
+	if entityID != "" {
 		var err error
 		existing, err = r.client.ListEntityScaleSets(ctx, kind, entityID)
 		if err != nil {
@@ -33,22 +34,29 @@ func (r *Reconciler) ensureScaleSets(ctx context.Context, kind garm.EntityKind, 
 		want := declared[setName].CreateScaleSetParams
 		want.Name = setName
 		name := entityName + "/" + setName
-		if template := declared[setName].Template; template != "" {
-			id, err := r.templateID(template)
-			if err != nil {
-				return fmt.Errorf("%s %s: %w", KindScaleSet, name, err)
-			}
-			want.TemplateID = &id
+		id, err := r.templateID(declared[setName].Template, want.OSType)
+		if err != nil {
+			return fmt.Errorf("%s %s: %w", KindScaleSet, name, err)
 		}
+		want.TemplateID = &id
 
-		idx := slices.IndexFunc(existing, func(have params.ScaleSet) bool { return have.Name == setName })
-		var err error
-		if idx < 0 {
+		var matches []params.ScaleSet
+		for _, set := range existing {
+			if set.Name == setName {
+				matches = append(matches, set)
+			}
+		}
+		switch len(matches) {
+		case 0:
 			err = r.apply(Change{Action: Create, Kind: KindScaleSet, Name: name}, func() error {
 				return r.client.CreateEntityScaleSet(ctx, kind, entityID, want)
 			})
-		} else {
-			err = r.updateScaleSet(ctx, name, existing[idx].ID, want)
+		case 1:
+			err = r.updateScaleSet(ctx, name, matches[0].ID, want)
+		default:
+			// Garm does not keep names unique, it only intends to per
+			// runner group.
+			err = fmt.Errorf("%s %s: %d scale sets share this name, which has to be unique", KindScaleSet, name, len(matches))
 		}
 		if err != nil {
 			return err
@@ -105,13 +113,10 @@ func scaleSetDiff(want params.CreateScaleSetParams, set params.ScaleSet) ([]stri
 		have.Labels = append(have.Labels, tag.Name)
 	}
 
-	// Garm picks these when a scale set is created without them, see
-	// poolDiff.
+	// Garm picks these when a scale set is created without them and
+	// cannot go back to its choice, see poolDiff.
 	if want.RunnerBootstrapTimeout == 0 {
 		have.RunnerBootstrapTimeout = 0
-	}
-	if want.TemplateID == nil {
-		have.TemplateID = nil
 	}
 	if want.GitHubRunnerGroup == "" {
 		want.GitHubRunnerGroup = defaultRunnerGroup
@@ -187,10 +192,27 @@ func (r *Reconciler) staleScaleSets(ctx context.Context) ([]runnerSet, error) {
 					instances: func(ctx context.Context) ([]params.Instance, error) {
 						return r.client.ListScaleSetInstances(ctx, set.ID)
 					},
-					delete: func(ctx context.Context) error { return r.client.DeleteScaleSet(ctx, set.ID) },
+					delete: func(ctx context.Context) error { return r.deleteScaleSet(ctx, set.ID) },
 				})
 			}
 		}
 	}
 	return stale, nil
+}
+
+// deleteScaleSet deletes a scale set and checks that it is gone. Garm
+// reports success when it could not delete the scale set from GitHub, in
+// which case it keeps it.
+func (r *Reconciler) deleteScaleSet(ctx context.Context, id uint) error {
+	if err := r.client.DeleteScaleSet(ctx, id); err != nil {
+		return err
+	}
+	_, err := r.client.GetScaleSet(ctx, id)
+	switch {
+	case garm.IsNotFound(err):
+		return nil
+	case err != nil:
+		return err
+	}
+	return errors.New("garm did not delete the scale set, its log has the reason")
 }
