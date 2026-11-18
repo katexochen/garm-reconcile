@@ -103,6 +103,13 @@ github:
       endpoint: github.com
       pat:
         oauth2_token: {_secret: github-token}
+  templates:
+    custom:
+      description: runner install script
+      os_type: linux
+      data: |
+        #!/bin/bash
+        echo install
   repositories:
     owner/repo:
       credentials_name: main
@@ -131,6 +138,7 @@ github:
           os_arch: amd64
           tags: [plain]
           max_runners: 1
+          template: custom
           enabled: true
           priority: 5
   enterprises:
@@ -178,6 +186,7 @@ func TestAgainstGarm(t *testing.T) {
 	reconcile(state, `create admin user admin
 update controller (agent_url, callback_url, metadata_url, webhook_url)
 create github credentials main
+create github template custom
 create repository owner/repo
 create organization my-org
 create pool my-org/coco
@@ -196,7 +205,9 @@ create enterprise corp
 `)
 	change("            disable_updates: true\n", "")
 	change("          enabled: true\n          priority: 5\n", "")
+	change("        echo install\n", "        echo changed\n")
 	reconcile(state, `update github credentials main (description)
+update github template custom (data)
 update organization my-org (pool_balancer_type, agent_mode)
 update pool my-org/coco (enable_shell, enabled, extra_specs, github-runner-group, max_runners, runner_bootstrap_timeout, tags)
 update pool my-org/plain (enabled, priority)
@@ -206,12 +217,13 @@ update pool my-org/plain (enabled, priority)
 	state = strings.ReplaceAll(state, "credentials_name: main", "credentials_name: renamed")
 	change("    main:\n", "    renamed:\n")
 	state = state[:strings.Index(state, "        plain:")]
-	state = state[:strings.Index(state, "  repositories:")] + state[strings.Index(state, "  organizations:"):]
+	state = state[:strings.Index(state, "  templates:")] + state[strings.Index(state, "  organizations:"):]
 	reconcile(state, `create github credentials renamed
 update organization my-org (credentials_name)
 delete pool my-org/plain
 delete repository owner/repo
 delete enterprise corp
+delete github template custom
 delete github credentials main
 `)
 }

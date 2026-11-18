@@ -109,6 +109,36 @@ func (c *Client) DeleteGithubCredentials(ctx context.Context, id uint) error {
 	return c.do(ctx, http.MethodDelete, nil, nil, "github", "credentials", formatID(id))
 }
 
+// ListTemplates lists the templates without their data, which GetTemplate
+// returns.
+func (c *Client) ListTemplates(ctx context.Context) ([]params.Template, error) {
+	var templates []params.Template
+	err := c.do(ctx, http.MethodGet, nil, &templates, "templates")
+	return templates, err
+}
+
+func (c *Client) GetTemplate(ctx context.Context, id uint) (params.Template, error) {
+	var template params.Template
+	err := c.do(ctx, http.MethodGet, nil, &template, "templates", formatID(id))
+	return template, err
+}
+
+func (c *Client) CreateTemplate(ctx context.Context, create params.CreateTemplateParams) (params.Template, error) {
+	var template params.Template
+	err := c.do(ctx, http.MethodPost, create, &template, "templates")
+	return template, err
+}
+
+func (c *Client) UpdateTemplate(ctx context.Context, id uint, update params.UpdateTemplateParams) error {
+	return c.do(ctx, http.MethodPut, update, nil, "templates", formatID(id))
+}
+
+// DeleteTemplate deletes a template. Garm rejects the request with a bad
+// request error while pools use the template.
+func (c *Client) DeleteTemplate(ctx context.Context, id uint) error {
+	return c.do(ctx, http.MethodDelete, nil, nil, "templates", formatID(id))
+}
+
 func (c *Client) ListEntities(ctx context.Context, kind EntityKind) ([]Entity, error) {
 	var entities []Entity
 	err := c.do(ctx, http.MethodGet, nil, &entities, kind.collection())

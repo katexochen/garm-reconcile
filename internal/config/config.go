@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 
+	commonparams "github.com/cloudbase/garm-provider-common/params"
 	"github.com/cloudbase/garm/params"
 	"sigs.k8s.io/yaml"
 )
@@ -39,6 +40,7 @@ type Controller struct {
 // Forge is everything declared for one forge type.
 type Forge struct {
 	Credentials map[string]Credentials `json:"credentials,omitempty"`
+	Templates   map[string]Template    `json:"templates,omitempty"`
 	// Repositories are keyed by "owner/name".
 	Repositories  map[string]Entity `json:"repositories,omitempty"`
 	Organizations map[string]Entity `json:"organizations,omitempty"`
@@ -67,6 +69,13 @@ type App struct {
 	PrivateKey string `json:"private_key"`
 }
 
+// Template is a script that installs the runner on a new instance.
+type Template struct {
+	Description string              `json:"description,omitempty"`
+	OSType      commonparams.OSType `json:"os_type"`
+	Data        string              `json:"data"`
+}
+
 // Entity is a repository, organization or enterprise that garm provides
 // runners for.
 type Entity struct {
@@ -76,10 +85,19 @@ type Entity struct {
 	PoolBalancerType params.PoolBalancerType `json:"pool_balancer_type,omitempty"`
 	AgentMode        bool                    `json:"agent_mode,omitempty"`
 	// Pools are keyed by their runner prefix, which identifies a pool
-	// within its entity. Their settings are the ones garm takes to create
-	// a pool, so the accepted fields follow the garm release this is
-	// built against.
-	Pools map[string]params.CreatePoolParams `json:"pools,omitempty"`
+	// within its entity.
+	Pools map[string]Pool `json:"pools,omitempty"`
+}
+
+// Pool is a pool of runners. Its settings are the ones garm takes to create
+// a pool, so the accepted fields follow the garm release this is built
+// against.
+type Pool struct {
+	params.CreatePoolParams
+	// Template names the template that installs the runners, in place of
+	// the template ID garm takes. It may be a template garm ships. Garm
+	// picks one, and keeps the one a pool has, if it is empty.
+	Template string `json:"template,omitempty"`
 }
 
 // Load reads and validates the desired state from a YAML or JSON file.

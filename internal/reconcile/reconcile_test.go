@@ -42,7 +42,7 @@ func desiredState() *config.Config {
 			Organizations: map[string]config.Entity{
 				"my-org": {
 					CredentialsName: "main",
-					Pools:           map[string]params.CreatePoolParams{"coco": pool()},
+					Pools:           map[string]config.Pool{"coco": pool()},
 				},
 			},
 			Enterprises: map[string]config.Entity{
@@ -52,8 +52,8 @@ func desiredState() *config.Config {
 	}
 }
 
-func pool() params.CreatePoolParams {
-	return params.CreatePoolParams{
+func pool() config.Pool {
+	return config.Pool{CreatePoolParams: params.CreatePoolParams{
 		ProviderName: "incus",
 		Image:        "ubuntu",
 		Flavor:       "default",
@@ -62,7 +62,7 @@ func pool() params.CreatePoolParams {
 		Tags:         []string{"coco", "linux"},
 		MaxRunners:   2,
 		Enabled:      true,
-	}
+	}}
 }
 
 // run describes how to reconcile the controller behind srv.
@@ -199,7 +199,10 @@ func TestEnsureIsIdempotent(t *testing.T) {
 	changes := run{srv: srv, cfg: cfg}.ensure(t)
 	assertEqual(t, "changes", changes, nil)
 	// Only the secret of the credentials is sent again.
-	assertEqual(t, "mutations", takeMutations(srv), []string{"PUT /api/v1/github/credentials/1"})
+	mutations := takeMutations(srv)
+	if len(mutations) != 1 || !strings.HasPrefix(mutations[0], "PUT /api/v1/github/credentials/") {
+		t.Errorf("mutations = %v, want one update of the credentials", mutations)
+	}
 }
 
 func TestEnsureUpdates(t *testing.T) {
@@ -371,7 +374,7 @@ func TestDryRun(t *testing.T) {
 	delete(cfg.GitHub.Enterprises, "corp")
 	cfg.GitHub.Organizations["new-org"] = config.Entity{
 		CredentialsName: "main",
-		Pools:           map[string]params.CreatePoolParams{"coco": pool()},
+		Pools:           map[string]config.Pool{"coco": pool()},
 	}
 	larger := pool()
 	larger.MaxRunners = 4
@@ -495,13 +498,13 @@ func populatedPool(t *testing.T, seed uint) params.CreatePoolParams {
 // reconciling does not read back or does not update.
 func TestEnsureCoversAllPoolFields(t *testing.T) {
 	cfg := desiredState()
-	cfg.GitHub.Organizations["my-org"].Pools["coco"] = populatedPool(t, 1)
+	cfg.GitHub.Organizations["my-org"].Pools["coco"] = config.Pool{CreatePoolParams: populatedPool(t, 1)}
 	srv := initialized(t, cfg)
 
 	changes := run{srv: srv, cfg: cfg}.ensure(t)
 	assertEqual(t, "changes after creating the pool", changes, nil)
 
-	cfg.GitHub.Organizations["my-org"].Pools["coco"] = populatedPool(t, 2)
+	cfg.GitHub.Organizations["my-org"].Pools["coco"] = config.Pool{CreatePoolParams: populatedPool(t, 2)}
 	fields := jsonNames(reflect.TypeFor[params.CreatePoolParams]())
 	fields = slices.DeleteFunc(fields, func(name string) bool {
 		return name == "runner_prefix" || name == "provider_name"

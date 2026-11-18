@@ -68,12 +68,16 @@ func validateURL(p *problems, path, value string, required bool) {
 
 func (f Forge) validate(path string, p *problems) {
 	validateNames(p, path+".credentials", f.Credentials)
+	validateNames(p, path+".templates", f.Templates)
 	validateNames(p, path+".repositories", f.Repositories)
 	validateNames(p, path+".organizations", f.Organizations)
 	validateNames(p, path+".enterprises", f.Enterprises)
 
 	for _, name := range sortedKeys(f.Credentials) {
 		f.Credentials[name].validate(fmt.Sprintf("%s.credentials.%s", path, name), p)
+	}
+	for _, name := range sortedKeys(f.Templates) {
+		f.Templates[name].validate(fmt.Sprintf("%s.templates.%s", path, name), p)
 	}
 	for _, name := range sortedKeys(f.Repositories) {
 		entityPath := fmt.Sprintf("%s.repositories.%s", path, name)
@@ -133,6 +137,21 @@ func (c Credentials) validate(path string, p *problems) {
 	}
 }
 
+func (t Template) validate(path string, p *problems) {
+	validateOSType(p, path, t.OSType)
+	if t.Data == "" {
+		p.addf("%s.data: must be set", path)
+	}
+}
+
+func validateOSType(p *problems, path string, osType commonparams.OSType) {
+	switch osType {
+	case commonparams.Linux, commonparams.Windows:
+	default:
+		p.addf("%s.os_type: must be linux or windows", path)
+	}
+}
+
 func (f Forge) validateEntity(path string, e Entity, p *problems) {
 	if e.CredentialsName == "" {
 		p.addf("%s.credentials_name: must be set", path)
@@ -156,10 +175,12 @@ func (f Forge) validateEntity(path string, e Entity, p *problems) {
 		if err := pool.Validate(); err != nil {
 			p.addf("%s: %w", poolPath, err)
 		}
-		switch pool.OSType {
-		case commonparams.Linux, commonparams.Windows:
-		default:
-			p.addf("%s.os_type: must be linux or windows", poolPath)
+		validateOSType(p, poolPath, pool.OSType)
+		if pool.TemplateID != nil {
+			p.addf("%s.template_id: must not be set, name the template in template instead", poolPath)
+		}
+		if tpl, ok := f.Templates[pool.Template]; ok && tpl.OSType != pool.OSType {
+			p.addf("%s.template: template %s is for %s", poolPath, pool.Template, tpl.OSType)
 		}
 		switch pool.OSArch {
 		case commonparams.Amd64, commonparams.Arm64, commonparams.Arm:

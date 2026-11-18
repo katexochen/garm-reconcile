@@ -39,7 +39,7 @@ func TestPruneDeletesUndeclaredResources(t *testing.T) {
 	cfg.GitHub.Credentials["legacy"] = config.Credentials{Endpoint: "github.com", PAT: &config.PAT{OAuth2Token: "t"}}
 	cfg.GitHub.Organizations["legacy-org"] = config.Entity{
 		CredentialsName: "legacy",
-		Pools:           map[string]params.CreatePoolParams{"old": pool()},
+		Pools:           map[string]config.Pool{"old": pool()},
 	}
 	cfg.GitHub.Organizations["my-org"].Pools["old"] = pool()
 	srv := initialized(t, cfg)
@@ -138,7 +138,7 @@ func TestPruneDisablesAllPoolsBeforeWaiting(t *testing.T) {
 	cfg := desiredState()
 	cfg.GitHub.Repositories["owner/repo"] = config.Entity{
 		CredentialsName: "main",
-		Pools:           map[string]params.CreatePoolParams{"other": pool()},
+		Pools:           map[string]config.Pool{"other": pool()},
 	}
 	srv := initialized(t, cfg)
 	srv.State(func(st *garmtest.State) {

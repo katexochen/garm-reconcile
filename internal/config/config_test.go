@@ -73,8 +73,8 @@ func TestParse(t *testing.T) {
 			Organizations: map[string]Entity{
 				"my-org": {
 					CredentialsName: "main",
-					Pools: map[string]params.CreatePoolParams{
-						"coco": {
+					Pools: map[string]Pool{
+						"coco": {CreatePoolParams: params.CreatePoolParams{
 							ProviderName: "incus",
 							Image:        "ubuntu",
 							Flavor:       "default",
@@ -83,7 +83,7 @@ func TestParse(t *testing.T) {
 							Tags:         []string{"coco"},
 							MaxRunners:   2,
 							ExtraSpecs:   json.RawMessage(`{"disable_updates":true}`),
-						},
+						}},
 					},
 				},
 			},

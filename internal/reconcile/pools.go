@@ -12,6 +12,7 @@ import (
 	commonparams "github.com/cloudbase/garm-provider-common/params"
 	"github.com/cloudbase/garm/params"
 
+	"github.com/katexochen/garm-reconcile/internal/config"
 	"github.com/katexochen/garm-reconcile/internal/garm"
 )
 
@@ -25,7 +26,7 @@ func isPool(pool params.Pool, prefix string, want params.CreatePoolParams) bool 
 
 // ensurePools creates and updates the pools of an entity. entityID is empty
 // in a dry run that would create the entity.
-func (r *Reconciler) ensurePools(ctx context.Context, kind garm.EntityKind, entityName, entityID string, declared map[string]params.CreatePoolParams) error {
+func (r *Reconciler) ensurePools(ctx context.Context, kind garm.EntityKind, entityName, entityID string, declared map[string]config.Pool) error {
 	var existing []params.Pool
 	if entityID != "" {
 		var err error
@@ -36,9 +37,16 @@ func (r *Reconciler) ensurePools(ctx context.Context, kind garm.EntityKind, enti
 	}
 
 	for _, prefix := range sortedKeys(declared) {
-		want := declared[prefix]
+		want := declared[prefix].CreatePoolParams
 		want.Prefix = prefix
 		name := entityName + "/" + prefix
+		if template := declared[prefix].Template; template != "" {
+			id, err := r.templateID(template)
+			if err != nil {
+				return fmt.Errorf("%s %s: %w", KindPool, name, err)
+			}
+			want.TemplateID = &id
+		}
 
 		var matches []params.Pool
 		for _, pool := range existing {
@@ -195,7 +203,7 @@ func (r *Reconciler) stalePools(ctx context.Context) ([]stalePool, error) {
 			}
 			for _, pool := range pools {
 				prefix := strings.ToLower(pool.GetRunnerPrefix())
-				if declared, ok := want.Pools[prefix]; ok && isPool(pool, prefix, declared) {
+				if declared, ok := want.Pools[prefix]; ok && isPool(pool, prefix, declared.CreatePoolParams) {
 					continue
 				}
 				stale = append(stale, stalePool{Pool: pool, name: entity.FullName() + "/" + pool.GetRunnerPrefix()})

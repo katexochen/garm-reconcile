@@ -30,6 +30,7 @@ type State struct {
 	Admin       *params.NewUserParams
 	Controller  params.ControllerInfo
 	Credentials []*Credentials
+	Templates   []*params.Template
 	Entities    map[garm.EntityKind][]*Entity
 	Pools       []*params.Pool
 	Instances   []*params.Instance
@@ -66,6 +67,14 @@ type Server struct {
 func NewServer(t *testing.T) *Server {
 	t.Helper()
 	s := &Server{state: State{Entities: map[garm.EntityKind][]*Entity{}}}
+	// Garm ships templates, which nobody can change.
+	s.state.Templates = []*params.Template{{
+		ID: s.state.newID(), Name: "github_linux", OSType: commonparams.Linux,
+		ForgeType: params.GithubEndpointType, Owner: params.SystemUser, Data: []byte("#!/bin/sh"),
+	}, {
+		ID: s.state.newID(), Name: "github_windows", OSType: commonparams.Windows,
+		ForgeType: params.GithubEndpointType, Owner: params.SystemUser, Data: []byte("#ps1"),
+	}}
 
 	mux := http.NewServeMux()
 	mux.Handle("POST /api/v1/first-run", s.route(public, (*State).firstRun))
@@ -77,6 +86,11 @@ func NewServer(t *testing.T) *Server {
 	mux.Handle("POST /api/v1/github/credentials", s.route(configured, (*State).createCredentials))
 	mux.Handle("PUT /api/v1/github/credentials/{id}", s.route(configured, (*State).updateCredentials))
 	mux.Handle("DELETE /api/v1/github/credentials/{id}", s.route(configured, (*State).deleteCredentials))
+	mux.Handle("GET /api/v1/templates", s.route(configured, (*State).listTemplates))
+	mux.Handle("POST /api/v1/templates", s.route(configured, (*State).createTemplate))
+	mux.Handle("GET /api/v1/templates/{id}", s.route(configured, (*State).getTemplate))
+	mux.Handle("PUT /api/v1/templates/{id}", s.route(configured, (*State).updateTemplate))
+	mux.Handle("DELETE /api/v1/templates/{id}", s.route(configured, (*State).deleteTemplate))
 	for kind, collection := range map[garm.EntityKind]string{
 		garm.Repository:   "repositories",
 		garm.Organization: "organizations",
@@ -361,6 +375,96 @@ func (st *State) deleteCredentials(r *http.Request) (any, error) {
 	return nil, nil
 }
 
+// listTemplates leaves out the data of the templates, like garm.
+func (st *State) listTemplates(_ *http.Request) (any, error) {
+	templates := []params.Template{}
+	for _, t := range st.Templates {
+		listed := *t
+		listed.Data = nil
+		templates = append(templates, listed)
+	}
+	return templates, nil
+}
+
+func (st *State) templateByID(id string) *params.Template {
+	for _, t := range st.Templates {
+		if formatID(t.ID) == id {
+			return t
+		}
+	}
+	return nil
+}
+
+func formatID(id uint) string {
+	return strconv.FormatUint(uint64(id), 10)
+}
+
+func (st *State) getTemplate(r *http.Request) (any, error) {
+	template := st.templateByID(r.PathValue("id"))
+	if template == nil {
+		return nil, notFound()
+	}
+	return *template, nil
+}
+
+func (st *State) createTemplate(r *http.Request) (any, error) {
+	create, err := decode[params.CreateTemplateParams](r)
+	if err != nil {
+		return nil, err
+	}
+	if err := create.Validate(); err != nil {
+		return nil, badRequest("invalid create params %q", err)
+	}
+	for _, t := range st.Templates {
+		if t.Name == create.Name && t.Owner != params.SystemUser {
+			return nil, conflict("a template name already exists with the specified name")
+		}
+	}
+	template := &params.Template{
+		ID: st.newID(), Name: create.Name, Description: create.Description,
+		OSType: create.OSType, ForgeType: create.ForgeType, Data: create.Data, Owner: st.Admin.Username,
+	}
+	st.Templates = append(st.Templates, template)
+	return *template, nil
+}
+
+func (st *State) updateTemplate(r *http.Request) (any, error) {
+	template := st.templateByID(r.PathValue("id"))
+	if template == nil {
+		return nil, notFound()
+	}
+	if template.Owner == params.SystemUser {
+		return nil, badRequest("cannot edit system templates")
+	}
+	update, err := decode[params.UpdateTemplateParams](r)
+	if err != nil {
+		return nil, err
+	}
+	setPointer(&template.Name, update.Name)
+	setPointer(&template.Description, update.Description)
+	if len(update.Data) > 0 {
+		template.Data = update.Data
+	}
+	return *template, nil
+}
+
+func (st *State) deleteTemplate(r *http.Request) (any, error) {
+	template := st.templateByID(r.PathValue("id"))
+	if template == nil {
+		return nil, nil
+	}
+	if template.Owner == params.SystemUser {
+		return nil, badRequest("cannot delete system templates")
+	}
+	for _, p := range st.Pools {
+		if p.TemplateID == template.ID {
+			return nil, badRequest("cannot delete template while in use by pools or scale sets")
+		}
+	}
+	st.Templates = slices.DeleteFunc(st.Templates, func(t *params.Template) bool { return t == template })
+	return nil, nil
+}
+
 // wireEntity converts an entity to the type garm serializes for its kind.
 func wireEntity(kind garm.EntityKind, e *Entity) any {
 	switch kind {
@@ -547,8 +651,6 @@ func createEntityPool(kind garm.EntityKind) handler {
 			ExtraSpecs:             create.ExtraSpecs,
 			GitHubRunnerGroup:      create.GitHubRunnerGroup,
 			Priority:               create.Priority,
-			TemplateID:             1,
-			TemplateName:           "system",
 		}
 		for _, tag := range create.Tags {
 			pool.Tags = append(pool.Tags, params.Tag{ID: tag, Name: tag})
@@ -556,9 +658,17 @@ func createEntityPool(kind garm.EntityKind) handler {
 		if pool.RunnerBootstrapTimeout == 0 {
 			pool.RunnerBootstrapTimeout = appdefaults.DefaultRunnerBootstrapTimeout
 		}
-		if create.TemplateID != nil {
-			pool.TemplateID = *create.TemplateID
+		// Without a template, garm picks the one it ships for the OS.
+		for _, t := range st.Templates {
+			if create.TemplateID == nil && t.Owner == params.SystemUser && t.OSType == create.OSType {
+				create.TemplateID = &t.ID
+			}
 		}
+		template := st.templateByID(formatID(*create.TemplateID))
+		if template == nil {
+			return nil, badRequest("failed to find suitable template")
+		}
+		pool.TemplateID, pool.TemplateName = template.ID, template.Name
 		switch kind {
 		case garm.Repository:
 			pool.RepoID = entity.ID
@@ -616,7 +726,13 @@ func (st *State) updatePool(r *http.Request) (any, error) {
 	setPointer(&pool.EnableShell, update.EnableShell)
 	setPointer(&pool.GitHubRunnerGroup, update.GitHubRunnerGroup)
 	setPointer(&pool.Priority, update.Priority)
-	setPointer(&pool.TemplateID, update.TemplateID)
+	if update.TemplateID != nil {
+		template := st.templateByID(formatID(*update.TemplateID))
+		if template == nil {
+			return nil, badRequest("failed to find template")
+		}
+		pool.TemplateID, pool.TemplateName = template.ID, template.Name
+	}
 	if update.ExtraSpecs != nil {
 		pool.ExtraSpecs = update.ExtraSpecs
 	}

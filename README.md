@@ -55,6 +55,11 @@ github:
     #   installation_id: 2
     #   private_key: { _secret: /run/secrets/github-app.pem }
 
+  templates:
+    nixos:
+      os_type: linux
+      data: { _secret: /etc/garm/runner-install.tmpl }
+
   organizations:
     my-org:
       credentials_name: main
@@ -63,6 +68,7 @@ github:
           provider_name: incus
           image: ubuntu:24.04
           flavor: default
+          template: nixos # optional
           os_type: linux
           os_arch: amd64
           tags: [coco]
@@ -92,14 +98,23 @@ that is unique within its entity and declare it under that name.
 The provider of a pool cannot be changed. Declaring another provider creates a
 new pool, and the existing one is deleted by `-prune`.
 
-garm chooses `runner_bootstrap_timeout` and `template_id` for pools that are
+### Templates
+
+A template is the script that installs the runner on a new instance. Pools name
+their template in `template`, which can be a declared template or one that garm
+ships, like `github_linux`. `template_id` of the garm API is not accepted.
+Templates that garm ships are never changed or deleted. The OS type of a
+template cannot be changed.
+
+garm chooses `runner_bootstrap_timeout` and the template for pools that are
 created without them. Removing them from a declared pool leaves the values the
 pool has.
 
 ### Secrets
 
 Any string can be replaced with `{ _secret: <path> }`, and is then read from
-that file. Trailing newlines are removed. Relative paths are resolved against
+that file. This also works for values that are not secret but kept in a file,
+like the data of a template. Trailing newlines are removed. Relative paths are resolved against
 `$CREDENTIALS_DIRECTORY`, which systemd sets for services that use
 `LoadCredential=`.
 
@@ -114,8 +129,8 @@ controller and to log in. Changing it afterwards is not supported.
 
 1. It creates and updates everything that is declared. On a new controller it
    creates the admin user first.
-2. With `-prune`, it deletes pools, entities and credentials that are not
-   declared.
+2. With `-prune`, it deletes pools, entities, templates and credentials that
+   are not declared.
 
 A pool that has runners cannot be deleted. garm-reconcile disables the pool,
 removes its idle runners and waits for the remaining ones to finish their jobs.
@@ -156,7 +171,6 @@ With this unit, the state file references the secrets as
 - Custom GitHub endpoints and Gitea
 - Scale sets. `-prune` fails on an undeclared entity that has scale sets, as
   garm does not delete such an entity.
-- Runner install templates
 - Installing webhooks
 
 ## Development

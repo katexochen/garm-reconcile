@@ -25,15 +25,15 @@ func validConfig() *Config {
 			Organizations: map[string]Entity{
 				"my-org": {
 					CredentialsName: "main",
-					Pools:           map[string]params.CreatePoolParams{"coco": validPool()},
+					Pools:           map[string]Pool{"coco": validPool()},
 				},
 			},
 		},
 	}
 }
 
-func validPool() params.CreatePoolParams {
-	return params.CreatePoolParams{
+func validPool() Pool {
+	return Pool{CreatePoolParams: params.CreatePoolParams{
 		ProviderName: "incus",
 		Image:        "ubuntu",
 		Flavor:       "default",
@@ -41,7 +41,7 @@ func validPool() params.CreatePoolParams {
 		OSArch:       "amd64",
 		Tags:         []string{"coco"},
 		MaxRunners:   2,
-	}
+	}}
 }
 
 func TestValidate(t *testing.T) {
@@ -49,7 +49,7 @@ func TestValidate(t *testing.T) {
 		t.Fatalf("valid desired state rejected: %v", err)
 	}
 
-	withPool := func(name string, change func(*params.CreatePoolParams)) func(*Config) {
+	withPool := func(name string, change func(*Pool)) func(*Config) {
 		return func(c *Config) {
 			pool := validPool()
 			change(&pool)
@@ -131,19 +131,19 @@ func TestValidate(t *testing.T) {
 			wantErr: `github.repositories.owner/repo.pool_balancer_type: unknown type "random"`,
 		},
 		"pool name with invalid characters": {
-			change:  withPool("Co_Co", func(*params.CreatePoolParams) {}),
+			change:  withPool("Co_Co", func(*Pool) {}),
 			wantErr: "github.organizations.my-org.pools.Co_Co: pool names must consist of",
 		},
 		"pool with runner prefix": {
-			change:  withPool("coco", func(p *params.CreatePoolParams) { p.Prefix = "other" }),
+			change:  withPool("coco", func(p *Pool) { p.Prefix = "other" }),
 			wantErr: "github.organizations.my-org.pools.coco.runner_prefix: must not be set",
 		},
 		"pool without OS type": {
-			change:  withPool("coco", func(p *params.CreatePoolParams) { p.OSType = "" }),
+			change:  withPool("coco", func(p *Pool) { p.OSType = "" }),
 			wantErr: "github.organizations.my-org.pools.coco.os_type: must be linux or windows",
 		},
 		"pool with unknown architecture": {
-			change:  withPool("coco", func(p *params.CreatePoolParams) { p.OSArch = "riscv64" }),
+			change:  withPool("coco", func(p *Pool) { p.OSArch = "riscv64" }),
 			wantErr: "github.organizations.my-org.pools.coco.os_arch: must be amd64, arm64 or arm",
 		},
 		"names that only differ in case": {
@@ -156,8 +156,27 @@ func TestValidate(t *testing.T) {
 			},
 			wantErr: "github.credentials: names must not be empty",
 		},
+		"pool with template ID": {
+			change:  withPool("coco", func(p *Pool) { id := uint(1); p.TemplateID = &id }),
+			wantErr: "github.organizations.my-org.pools.coco.template_id: must not be set",
+		},
+		"pool with template for another OS": {
+			change: func(c *Config) {
+				c.GitHub.Templates = map[string]Template{"win": {OSType: "windows", Data: "#ps1"}}
+				withPool("coco", func(p *Pool) { p.Template = "win" })(c)
+			},
+			wantErr: "github.organizations.my-org.pools.coco.template: template win is for windows",
+		},
+		"template without data": {
+			change:  func(c *Config) { c.GitHub.Templates = map[string]Template{"empty": {OSType: "linux"}} },
+			wantErr: "github.templates.empty.data: must be set",
+		},
+		"template without OS type": {
+			change:  func(c *Config) { c.GitHub.Templates = map[string]Template{"tpl": {Data: "#!/bin/sh"}} },
+			wantErr: "github.templates.tpl.os_type: must be linux or windows",
+		},
 		"pool rejected by garm": {
-			change:  withPool("coco", func(p *params.CreatePoolParams) { p.MinIdleRunners = 3 }),
+			change:  withPool("coco", func(p *Pool) { p.MinIdleRunners = 3 }),
 			wantErr: "github.organizations.my-org.pools.coco: min_idle_runners cannot be larger than max_runners",
 		},
 	}

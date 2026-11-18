@@ -63,6 +63,7 @@ const (
 	KindAdmin       Kind = "admin user"
 	KindController  Kind = "controller"
 	KindCredentials Kind = "github credentials"
+	KindTemplate    Kind = "github template"
 	KindPool        Kind = "pool"
 )
 
@@ -86,6 +87,10 @@ type Reconciler struct {
 	client *garm.Client
 	cfg    *config.Config
 	opts   Options
+
+	// templates are the templates garm has once Ensure took care of the
+	// declared ones.
+	templates []params.Template
 }
 
 // New returns a Reconciler that brings the controller behind client to the
@@ -116,6 +121,9 @@ func (r *Reconciler) Ensure(ctx context.Context) error {
 	if err := r.ensureCredentials(ctx); err != nil {
 		return err
 	}
+	if err := r.ensureTemplates(ctx); err != nil {
+		return err
+	}
 	return r.ensureEntities(ctx)
 }
 
@@ -130,6 +138,9 @@ func (r *Reconciler) Prune(ctx context.Context) error {
 		return err
 	}
 	if err := r.pruneEntities(ctx); err != nil {
+		return err
+	}
+	if err := r.pruneTemplates(ctx); err != nil {
 		return err
 	}
 	return r.pruneCredentials(ctx)

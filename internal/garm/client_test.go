@@ -340,3 +340,45 @@ func TestNotFound(t *testing.T) {
 		t.Errorf("DeleteInstance() of a missing instance: error = %v, want not found", err)
 	}
 }
+
+func TestTemplates(t *testing.T) {
+	ctx := context.Background()
+	client, _ := configuredClient(t)
+
+	created, err := client.CreateTemplate(ctx, params.CreateTemplateParams{
+		Name: "nixos", OSType: commonparams.Linux, ForgeType: params.GithubEndpointType, Data: []byte("#!/bin/sh"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	templates, err := client.ListTemplates(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Garm ships two templates of its own.
+	if len(templates) != 3 || templates[2].Name != "nixos" || templates[2].Data != nil {
+		t.Fatalf("ListTemplates() = %+v, want the created template without data", templates)
+	}
+
+	update := params.UpdateTemplateParams{Description: ptr("changed"), Data: []byte("#!/bin/bash")}
+	if err := client.UpdateTemplate(ctx, created.ID, update); err != nil {
+		t.Fatal(err)
+	}
+	template, err := client.GetTemplate(ctx, created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if template.Description != "changed" || string(template.Data) != "#!/bin/bash" {
+		t.Errorf("GetTemplate() = %+v, want the updated template", template)
+	}
+
+	if err := client.UpdateTemplate(ctx, templates[0].ID, update); !garm.IsBadRequest(err) {
+		t.Errorf("UpdateTemplate() of a shipped template: error = %v, want a bad request", err)
+	}
+	if err := client.DeleteTemplate(ctx, created.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.GetTemplate(ctx, created.ID); !garm.IsNotFound(err) {
+		t.Errorf("GetTemplate() after delete: error = %v, want not found", err)
+	}
+}
