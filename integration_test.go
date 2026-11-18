@@ -239,7 +239,7 @@ update github template custom (data)
 update github organization my-org (pool_balancer_type, agent_mode)
 update github pool my-org/coco (enable_shell, enabled, extra_specs, github-runner-group, max_runners, runner_bootstrap_timeout, tags)
 update github pool my-org/plain (enabled, priority)
-update gitea endpoint local (description)
+update gitea endpoint local (description, tools_metadata_url)
 `)
 
 	// Renaming the credentials replaces them. The rest gets deleted,

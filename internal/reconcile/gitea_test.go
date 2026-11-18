@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/cloudbase/garm/params"
+	"github.com/cloudbase/garm/util/appdefaults"
 
 	"github.com/katexochen/garm-reconcile/internal/config"
 	"github.com/katexochen/garm-reconcile/internal/garm"
@@ -160,14 +161,30 @@ func TestEndpointUpdates(t *testing.T) {
 		})
 	})
 
-	// A CA bundle that is not declared is left alone.
+	// Garm has no way to remove a CA bundle.
 	undeclared := cfg.GitHub.Endpoints["ghes"]
 	undeclared.CACertBundle = ""
 	cfg.GitHub.Endpoints["ghes"] = undeclared
-	assertEqual(t, "changes without CA bundle", run{srv: srv, cfg: cfg}.prune(t), nil)
+	rec, _ := run{srv: srv, cfg: cfg}.reconciler(t)
+	err := rec.Ensure(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "github endpoint ghes: garm cannot remove the CA bundle") {
+		t.Errorf("Ensure() = %v, want it to refuse removing the CA bundle", err)
+	}
+}
+
+func TestUndeclaredToolsMetadataURLIsGarmsDefault(t *testing.T) {
+	cfg := withGitea()
+	srv := initialized(t, cfg)
+
+	endpoint := cfg.Gitea.Endpoints["local"]
+	endpoint.ToolsMetadataURL = ""
+	cfg.Gitea.Endpoints["local"] = endpoint
+	changes := run{srv: srv, cfg: cfg}.ensure(t)
+	assertEqual(t, "changes", changes, []string{"update gitea endpoint local (tools_metadata_url)"})
 	srv.State(func(st *garmtest.State) {
-		assertEqual(t, "CA bundle", string(st.Endpoints[1].CACertBundle), "second bundle")
+		assertEqual(t, "tools metadata URL", st.Endpoints[1].ToolsMetadataURL, appdefaults.GiteaRunnerReleasesURL)
 	})
+	assertEqual(t, "changes of the second run", run{srv: srv, cfg: cfg}.ensure(t), nil)
 }
 
 func TestCustomGitHubEndpoint(t *testing.T) {

@@ -72,6 +72,7 @@ type Server struct {
 func NewServer(t *testing.T) *Server {
 	t.Helper()
 	s := &Server{state: State{Entities: map[garm.EntityKind][]*Entity{}}}
+	s.state.Controller.MinimumJobAgeBackoff = 30
 	// Garm ships templates.
 	s.state.Templates = []*params.Template{{
 		ID: s.state.newID(), Name: "github_linux", OSType: commonparams.Linux,
@@ -295,6 +296,7 @@ func (st *State) updateController(r *http.Request) (any, error) {
 			*field.dst = *field.src
 		}
 	}
+	setPointer(&st.Controller.MinimumJobAgeBackoff, update.MinimumJobAgeBackoff)
 	return st.Controller, nil
 }
 
@@ -336,6 +338,9 @@ func createEndpoint(forge params.EndpointType) handler {
 			if strings.EqualFold(e.Name, create.Name) {
 				return nil, conflict("%s endpoint already exists", forge)
 			}
+		}
+		if forge == params.GiteaEndpointType && create.ToolsMetadataURL == "" {
+			create.ToolsMetadataURL = appdefaults.GiteaRunnerReleasesURL
 		}
 		endpoint := &params.ForgeEndpoint{
 			Name: create.Name, Description: create.Description, EndpointType: forge,

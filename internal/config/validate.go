@@ -57,7 +57,7 @@ func (c Controller) validate(p *problems) {
 	validateURL(p, "controller.metadata_url", c.MetadataURL, true)
 	validateURL(p, "controller.callback_url", c.CallbackURL, true)
 	validateURL(p, "controller.agent_url", c.AgentURL, true)
-	validateURL(p, "controller.webhook_url", c.WebhookURL, false)
+	validateURL(p, "controller.webhook_url", c.WebhookURL, true)
 }
 
 // validateSharedNames rejects names that are declared for both forges, where

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/cloudbase/garm/params"
+	"github.com/cloudbase/garm/util/appdefaults"
 
 	"github.com/katexochen/garm-reconcile/internal/config"
 	"github.com/katexochen/garm-reconcile/internal/garm"
@@ -67,17 +68,21 @@ func (r *Reconciler) updateEndpoint(ctx context.Context, f *forge, name string, 
 	if want.Description != have.Description {
 		fields = append(fields, "description")
 	}
-	// Garm cannot unset the CA bundle and the tools metadata URL, so they
-	// are only managed when declared. Gitea endpoints have no upload URL.
-	if want.CACertBundle != "" && want.CACertBundle != string(have.CACertBundle) {
+	if want.CACertBundle != string(have.CACertBundle) {
+		if want.CACertBundle == "" {
+			return fmt.Errorf("%s %s: garm cannot remove the CA bundle of an endpoint, declare a new endpoint instead",
+				f.kind("endpoint"), name)
+		}
 		update.CACertBundle = []byte(want.CACertBundle)
 		fields = append(fields, "ca_cert_bundle")
 	}
-	if want.ToolsMetadataURL != "" && want.ToolsMetadataURL != have.ToolsMetadataURL {
-		update.ToolsMetadataURL = want.ToolsMetadataURL
+	// Gitea endpoints have a tools metadata URL and no upload URL, with
+	// GitHub endpoints it is the other way around.
+	if tools := f.toolsMetadataURL(want); tools != have.ToolsMetadataURL {
+		update.ToolsMetadataURL = tools
 		fields = append(fields, "tools_metadata_url")
 	}
-	if want.UploadBaseURL != "" && want.UploadBaseURL != have.UploadBaseURL {
+	if want.UploadBaseURL != have.UploadBaseURL {
 		update.UploadBaseURL = &want.UploadBaseURL
 		fields = append(fields, "upload_base_url")
 	}
@@ -122,4 +127,14 @@ func (f *forge) declaresEndpoint(name string) bool {
 		}
 	}
 	return false
+}
+
+// toolsMetadataURL returns where garm looks for the runner releases of an
+// endpoint, which is its default when no URL is declared for a Gitea
+// endpoint.
+func (f *forge) toolsMetadataURL(want config.Endpoint) string {
+	if want.ToolsMetadataURL == "" && f.typ == params.GiteaEndpointType {
+		return appdefaults.GiteaRunnerReleasesURL
+	}
+	return want.ToolsMetadataURL
 }

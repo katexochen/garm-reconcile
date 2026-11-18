@@ -38,8 +38,10 @@ type Controller struct {
 	MetadataURL string `json:"metadata_url"`
 	CallbackURL string `json:"callback_url"`
 	AgentURL    string `json:"agent_url"`
-	// WebhookURL is left untouched in garm when empty.
-	WebhookURL string `json:"webhook_url,omitempty"`
+	WebhookURL  string `json:"webhook_url"`
+	// MinimumJobAgeBackoff is the time in seconds a job has to be queued
+	// before garm creates a runner for it. Zero selects garm's default.
+	MinimumJobAgeBackoff uint `json:"minimum_job_age_backoff,omitempty"`
 }
 
 // Forge is everything declared for one forge type.
@@ -60,11 +62,10 @@ type Endpoint struct {
 	BaseURL     string `json:"base_url"`
 	// UploadBaseURL is required for GitHub and not used by Gitea.
 	UploadBaseURL string `json:"upload_base_url,omitempty"`
-	// CACertBundle holds PEM encoded certificates. It is left untouched
-	// in garm when empty.
+	// CACertBundle holds PEM encoded certificates.
 	CACertBundle string `json:"ca_cert_bundle,omitempty"`
 	// ToolsMetadataURL is where garm finds the runner releases of a Gitea
-	// endpoint. It is left untouched in garm when empty.
+	// endpoint. Garm has a default for it.
 	ToolsMetadataURL string `json:"tools_metadata_url,omitempty"`
 }
 

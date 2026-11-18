@@ -14,6 +14,7 @@ func validConfig() *Config {
 			MetadataURL: "http://garm/api/v1/metadata",
 			CallbackURL: "http://garm/api/v1/callbacks",
 			AgentURL:    "http://garm/agent",
+			WebhookURL:  "http://garm/webhooks",
 		},
 		GitHub: Forge{
 			Credentials: map[string]Credentials{
@@ -105,6 +106,10 @@ func TestValidate(t *testing.T) {
 		"relative callback URL": {
 			change:  func(c *Config) { c.Controller.CallbackURL = "/api/v1/callbacks" },
 			wantErr: `controller.callback_url: "/api/v1/callbacks" is not an absolute URL`,
+		},
+		"missing webhook URL": {
+			change:  func(c *Config) { c.Controller.WebhookURL = "" },
+			wantErr: "controller.webhook_url: must be set",
 		},
 		"invalid webhook URL": {
 			change:  func(c *Config) { c.Controller.WebhookURL = "garm" },

@@ -21,6 +21,10 @@ import (
 	"github.com/katexochen/garm-reconcile/internal/garm"
 )
 
+// defaultJobAgeBackoff is the time in seconds a new controller makes jobs
+// wait for a runner of their own.
+const defaultJobAgeBackoff = 30
+
 // ErrNotInitialized is returned by a dry run against a controller that
 // lacks its admin user or URLs. Garm does not allow inspecting such a
 // controller, so everything declared is going to be created.
@@ -228,10 +232,15 @@ func (r *Reconciler) ensureController(ctx context.Context) error {
 		return fmt.Errorf("reading the controller settings: %w", err)
 	}
 	want := r.cfg.Controller
+	if want.MinimumJobAgeBackoff == 0 {
+		want.MinimumJobAgeBackoff = defaultJobAgeBackoff
+	}
 	update := params.UpdateControllerParams{
-		MetadataURL: &want.MetadataURL,
-		CallbackURL: &want.CallbackURL,
-		AgentURL:    &want.AgentURL,
+		MetadataURL:          &want.MetadataURL,
+		CallbackURL:          &want.CallbackURL,
+		AgentURL:             &want.AgentURL,
+		WebhookURL:           &want.WebhookURL,
+		MinimumJobAgeBackoff: &want.MinimumJobAgeBackoff,
 	}
 	var fields []string
 	if want.AgentURL != info.AgentURL {
@@ -243,13 +252,11 @@ func (r *Reconciler) ensureController(ctx context.Context) error {
 	if want.MetadataURL != info.MetadataURL {
 		fields = append(fields, "metadata_url")
 	}
-	// Garm cannot unset the webhook URL, so it is only managed when
-	// declared.
-	if want.WebhookURL != "" {
-		update.WebhookURL = &want.WebhookURL
-		if want.WebhookURL != info.WebhookURL {
-			fields = append(fields, "webhook_url")
-		}
+	if want.MinimumJobAgeBackoff != info.MinimumJobAgeBackoff {
+		fields = append(fields, "minimum_job_age_backoff")
+	}
+	if want.WebhookURL != info.WebhookURL {
+		fields = append(fields, "webhook_url")
 	}
 	if len(fields) == 0 {
 		return nil

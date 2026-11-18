@@ -28,6 +28,7 @@ controller:
   metadata_url: http://garm/api/v1/metadata
   callback_url: http://garm/api/v1/callbacks
   agent_url: http://garm/agent
+  webhook_url: http://garm/webhooks
 github:
   credentials:
     main:
@@ -155,7 +156,7 @@ func TestPlanAndApply(t *testing.T) {
 
 	stdout = mustExecute(t, "apply", "-url", srv.URL, path)
 	want := `create admin user admin
-update controller (agent_url, callback_url, metadata_url)
+update controller (agent_url, callback_url, metadata_url, webhook_url)
 create github credentials main
 create github organization my-org
 create github pool my-org/coco

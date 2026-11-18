@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/cloudbase/garm/params"
+	"github.com/cloudbase/garm/util/appdefaults"
 
 	"github.com/katexochen/garm-reconcile/internal/config"
 	"github.com/katexochen/garm-reconcile/internal/garm"
@@ -111,12 +112,7 @@ func poolDiff(want params.CreatePoolParams, pool params.Pool) ([]string, error) 
 		have.Tags = append(have.Tags, tag.Name)
 	}
 
-	// Garm picks the timeout when a pool is created without one, and
-	// offers no way to go back to its choice. Not declaring it therefore
-	// leaves it as it is.
-	if want.RunnerBootstrapTimeout == 0 {
-		have.RunnerBootstrapTimeout = 0
-	}
+	want.RunnerBootstrapTimeout = bootstrapTimeout(want.RunnerBootstrapTimeout)
 	want.Tags, have.Tags = tagSet(want.Tags), tagSet(have.Tags)
 	want.ExtraSpecs, have.ExtraSpecs = extraSpecs(want.ExtraSpecs), extraSpecs(have.ExtraSpecs)
 
@@ -141,9 +137,8 @@ func poolUpdate(want params.CreatePoolParams, fields []string) params.UpdatePool
 		Priority:          &want.Priority,
 		TemplateID:        want.TemplateID,
 	}
-	if want.RunnerBootstrapTimeout != 0 {
-		update.RunnerBootstrapTimeout = &want.RunnerBootstrapTimeout
-	}
+	timeout := bootstrapTimeout(want.RunnerBootstrapTimeout)
+	update.RunnerBootstrapTimeout = &timeout
 	// Garm compares extra specs byte by byte and recreates the runners of
 	// the pool when they differ, so they are only sent on a real change.
 	if slices.Contains(fields, "extra_specs") {
@@ -153,6 +148,15 @@ func poolUpdate(want params.CreatePoolParams, fields []string) params.UpdatePool
 		}
 	}
 	return update
+}
+
+// bootstrapTimeout returns the time in minutes a runner gets to come up,
+// which is garm's default when none is declared.
+func bootstrapTimeout(declared uint) uint {
+	if declared == 0 {
+		return appdefaults.DefaultRunnerBootstrapTimeout
+	}
+	return declared
 }
 
 // tagSet returns tags in the form garm compares them: as a set, without

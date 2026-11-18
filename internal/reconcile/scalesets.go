@@ -116,11 +116,7 @@ func scaleSetDiff(want params.CreateScaleSetParams, set params.ScaleSet) ([]stri
 		have.Labels = append(have.Labels, tag.Name)
 	}
 
-	// Garm picks these when a scale set is created without them and
-	// cannot go back to its choice, see poolDiff.
-	if want.RunnerBootstrapTimeout == 0 {
-		have.RunnerBootstrapTimeout = 0
-	}
+	want.RunnerBootstrapTimeout = bootstrapTimeout(want.RunnerBootstrapTimeout)
 	if want.GitHubRunnerGroup == "" {
 		want.GitHubRunnerGroup = defaultRunnerGroup
 	}
@@ -151,9 +147,8 @@ func scaleSetUpdate(want params.CreateScaleSetParams, fields []string) params.Up
 		GitHubRunnerGroup: &runnerGroup,
 		TemplateID:        want.TemplateID,
 	}
-	if want.RunnerBootstrapTimeout != 0 {
-		update.RunnerBootstrapTimeout = &want.RunnerBootstrapTimeout
-	}
+	timeout := bootstrapTimeout(want.RunnerBootstrapTimeout)
+	update.RunnerBootstrapTimeout = &timeout
 	// See poolUpdate.
 	if slices.Contains(fields, "extra_specs") {
 		update.ExtraSpecs = want.ExtraSpecs

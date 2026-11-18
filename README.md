@@ -42,7 +42,8 @@ controller:
   metadata_url: http://10.0.10.1:9997/api/v1/metadata
   callback_url: http://10.0.10.1:9997/api/v1/callbacks
   agent_url: http://10.0.10.1:9997/agent
-  webhook_url: https://garm.example.com/webhooks # optional
+  webhook_url: https://garm.example.com/webhooks
+  minimum_job_age_backoff: 30 # optional
 
 github:
   credentials:
@@ -124,10 +125,8 @@ ships. Endpoints take `description`, `api_base_url`, `base_url` and
 `ca_cert_bundle`, GitHub endpoints also `upload_base_url`, and Gitea endpoints
 `tools_metadata_url`.
 
-garm does not change the URLs of an endpoint that has credentials, so changing
-them is an error. Declare a new endpoint instead. garm cannot unset
-`ca_cert_bundle` and `tools_metadata_url` either. Removing these two from the
-desired state leaves them as they are.
+garm does not change the URLs of an endpoint that has credentials and cannot
+remove a CA bundle, so both are errors. Declare a new endpoint instead.
 
 ### Pools
 
@@ -161,10 +160,6 @@ Templates that garm ships are never changed or deleted. Templates that exist
 in garm without being declared cannot be used, as `-prune` deletes them. The OS
 type of a template cannot be changed.
 
-garm chooses `runner_bootstrap_timeout` for pools and scale sets that are
-created without one. Removing it from the desired state leaves the value as it
-is.
-
 ### Secrets
 
 Any string can be replaced with `{ _secret: <path> }`, and is then read from
@@ -178,6 +173,14 @@ It sends the secrets of credentials and declared webhook secrets on every
 `apply`. The admin password is only used to create the admin user of a new
 controller and to log in. Changing it afterwards is not supported.
 
+### What is not declared
+
+Everything garm-reconcile knows about is managed. A setting that is not
+declared is set to garm's default, for example `runner_bootstrap_timeout` of a
+pool or `minimum_job_age_backoff` of the controller. Where garm cannot go back
+to having no value, like for the CA bundle of an endpoint, removing it from the
+desired state is an error.
+
 ## Reconciliation
 
 `apply` works in two phases:
@@ -189,7 +192,10 @@ controller and to log in. Changing it afterwards is not supported.
 
 A pool or scale set that has runners cannot be deleted. garm-reconcile disables
 it, removes its idle runners and waits for the remaining ones to finish their jobs.
-It never removes a runner that executes a job. `-drain-timeout` limits how long
+It does not remove a runner that executes a job. On Gitea this depends on garm
+knowing that the runner is busy, which it learns from the webhooks of the
+repository or organization: without them, garm takes a busy runner for idle,
+and Gitea does not refuse to delete it. GitHub does. `-drain-timeout` limits how long
 the second phase may take. When it expires, `apply` fails and the pools and
 scale sets stay disabled until the next run deletes them. Waiting cannot outlast the lifetime
 of garm's API tokens (`jwt_auth.time_to_live`) either. An interrupted `apply`

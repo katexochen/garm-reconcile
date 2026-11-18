@@ -278,3 +278,19 @@ func TestEnsureClearsExtraSpecs(t *testing.T) {
 	changes = run{srv: srv, cfg: cfg}.ensure(t)
 	assertEqual(t, "changes of the second run", changes, nil)
 }
+
+func TestUndeclaredBootstrapTimeoutIsGarmsDefault(t *testing.T) {
+	cfg := desiredState()
+	declared := pool()
+	declared.RunnerBootstrapTimeout = 30
+	cfg.GitHub.Organizations["my-org"].Pools["coco"] = declared
+	srv := initialized(t, cfg)
+
+	cfg.GitHub.Organizations["my-org"].Pools["coco"] = pool()
+	changes := run{srv: srv, cfg: cfg}.ensure(t)
+	assertEqual(t, "changes", changes, []string{"update github pool my-org/coco (runner_bootstrap_timeout)"})
+	srv.State(func(st *garmtest.State) {
+		assertEqual(t, "bootstrap timeout", st.Pools[0].RunnerBootstrapTimeout, 20)
+	})
+	assertEqual(t, "changes of the second run", run{srv: srv, cfg: cfg}.ensure(t), nil)
+}

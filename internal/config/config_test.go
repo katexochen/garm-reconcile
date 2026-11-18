@@ -20,6 +20,7 @@ controller:
   metadata_url: http://10.0.0.1:9997/api/v1/metadata
   callback_url: http://10.0.0.1:9997/api/v1/callbacks
   agent_url: http://10.0.0.1:9997/agent
+  webhook_url: http://10.0.0.1:9997/webhooks
 github:
   credentials:
     main:
@@ -65,6 +66,7 @@ func TestParse(t *testing.T) {
 			MetadataURL: "http://10.0.0.1:9997/api/v1/metadata",
 			CallbackURL: "http://10.0.0.1:9997/api/v1/callbacks",
 			AgentURL:    "http://10.0.0.1:9997/agent",
+			WebhookURL:  "http://10.0.0.1:9997/webhooks",
 		},
 		GitHub: Forge{
 			Credentials: map[string]Credentials{
@@ -100,7 +102,8 @@ func TestParseJSON(t *testing.T) {
 		"controller": {
 			"metadata_url": "http://garm/api/v1/metadata",
 			"callback_url": "http://garm/api/v1/callbacks",
-			"agent_url": "http://garm/agent"
+			"agent_url": "http://garm/agent",
+			"webhook_url": "http://garm/webhooks"
 		},
 		"github": {"credentials": {"app": {"endpoint": "github.com", "app": {
 			"app_id": 9007199254740993, "installation_id": 2, "private_key": "pem"

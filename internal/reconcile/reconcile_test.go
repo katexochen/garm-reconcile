@@ -31,6 +31,7 @@ func desiredState() *config.Config {
 			MetadataURL: "http://garm/api/v1/metadata",
 			CallbackURL: "http://garm/api/v1/callbacks",
 			AgentURL:    "http://garm/agent",
+			WebhookURL:  "http://garm/webhooks",
 		},
 		GitHub: config.Forge{
 			Credentials: map[string]config.Credentials{
@@ -153,7 +154,7 @@ func TestEnsureCreatesDeclaredResources(t *testing.T) {
 	changes := run{srv: srv, cfg: cfg}.ensure(t)
 	assertEqual(t, "changes", changes, []string{
 		"create admin user admin",
-		"update controller (agent_url, callback_url, metadata_url)",
+		"update controller (agent_url, callback_url, metadata_url, webhook_url)",
 		"create github credentials main",
 		"create github repository owner/repo",
 		"create github organization my-org",
@@ -166,7 +167,8 @@ func TestEnsureCreatesDeclaredResources(t *testing.T) {
 			Username: "admin", Email: "admin@example.com", Password: "hunter2",
 		})
 		assertEqual(t, "metadata URL", st.Controller.MetadataURL, cfg.Controller.MetadataURL)
-		assertEqual(t, "webhook URL", st.Controller.WebhookURL, "")
+		assertEqual(t, "webhook URL", st.Controller.WebhookURL, cfg.Controller.WebhookURL)
+		assertEqual(t, "job age backoff", st.Controller.MinimumJobAgeBackoff, 30)
 
 		creds := st.Credentials[0]
 		assertEqual(t, "credentials name", creds.Name, "main")
@@ -209,7 +211,7 @@ func TestEnsureUpdates(t *testing.T) {
 	cfg := desiredState()
 	srv := initialized(t, cfg)
 
-	cfg.Controller.WebhookURL = "http://garm/webhooks"
+	cfg.Controller.WebhookURL = "http://garm/moved"
 	cfg.GitHub.Credentials["main"] = config.Credentials{
 		Description: "rotated",
 		Endpoint:    "github.com",
@@ -242,7 +244,7 @@ func TestEnsureUpdates(t *testing.T) {
 	})
 
 	srv.State(func(st *garmtest.State) {
-		assertEqual(t, "webhook URL", st.Controller.WebhookURL, "http://garm/webhooks")
+		assertEqual(t, "webhook URL", st.Controller.WebhookURL, "http://garm/moved")
 		assertEqual(t, "description", st.Credentials[0].Description, "rotated")
 		assertEqual(t, "token", st.Credentials[0].PAT.OAuth2Token, "ghp_new")
 
@@ -416,22 +418,26 @@ func TestDryRunOnUninitializedController(t *testing.T) {
 		if !errors.Is(err, reconcile.ErrNotInitialized) {
 			t.Fatalf("Ensure() = %v, want ErrNotInitialized", err)
 		}
-		assertEqual(t, "changes", *changes, []string{"update controller (agent_url, callback_url, metadata_url)"})
+		assertEqual(t, "changes", *changes, []string{"update controller (agent_url, callback_url, metadata_url, webhook_url)"})
 		assertEqual(t, "mutations", takeMutations(srv), nil)
 	})
 }
 
-func TestEnsureLeavesUndeclaredWebhookURL(t *testing.T) {
+func TestEnsureResetsUndeclaredJobAgeBackoff(t *testing.T) {
 	cfg := desiredState()
-	cfg.Controller.WebhookURL = "http://garm/webhooks"
+	cfg.Controller.MinimumJobAgeBackoff = 5
 	srv := initialized(t, cfg)
-
-	cfg.Controller.WebhookURL = ""
-	changes := run{srv: srv, cfg: cfg}.ensure(t)
-	assertEqual(t, "changes", changes, nil)
 	srv.State(func(st *garmtest.State) {
-		assertEqual(t, "webhook URL", st.Controller.WebhookURL, "http://garm/webhooks")
+		assertEqual(t, "job age backoff", st.Controller.MinimumJobAgeBackoff, 5)
 	})
+
+	cfg.Controller.MinimumJobAgeBackoff = 0
+	changes := run{srv: srv, cfg: cfg}.ensure(t)
+	assertEqual(t, "changes", changes, []string{"update controller (minimum_job_age_backoff)"})
+	srv.State(func(st *garmtest.State) {
+		assertEqual(t, "job age backoff", st.Controller.MinimumJobAgeBackoff, 30)
+	})
+	assertEqual(t, "changes of the second run", run{srv: srv, cfg: cfg}.ensure(t), nil)
 }
 
 func TestEnsureMatchesEntitiesByEndpoint(t *testing.T) {

@@ -32,11 +32,12 @@ the workaround named with it can go.
   byte-identical to the stored one. Comparing the content would make updates
   safe to repeat. Workaround: `poolUpdate` only sends extra specs that differ
   in content.
-- **Some values cannot be reset.** An update cannot return
-  `runner_bootstrap_timeout` or `template_id` of a pool to garm's default,
-  cannot clear the `webhook_url` of the controller, and cannot set
-  `pool_balancer_type` of an entity back to empty. Removing these from the
-  desired state therefore leaves them as they are.
+- **Some values cannot be reset.** An update cannot remove the CA bundle of
+  an endpoint or the `webhook_url` of the controller, and cannot return
+  `runner_bootstrap_timeout`, `minimum_job_age_backoff` or
+  `tools_metadata_url` to garm's default other than by sending the default,
+  which clients then have to know. `pool_balancer_type` of an entity cannot
+  be set back to empty.
 - **Updating credentials always notifies.** `UpdateGithubCredentials` rewrites
   the payload and notifies watchers even if the token is the same. Entities
   compare the webhook secret first, credentials could do the same.
@@ -73,11 +74,20 @@ the workaround named with it can go.
 - **Template names are not scoped by forge.** The unique index is on name
   and user, so a GitHub and a Gitea template cannot share a name, although
   a template only ever applies to one forge.
-- **Without webhooks, garm notices late that a runner took or finished a
-  job.** It does not ask the forge for the state of its runners in between,
-  so `runner_status` can be minutes behind. A busy runner that garm reports
-  as idle is then only protected by the forge refusing to remove it, which
-  GitHub does. Whether Gitea does is not verified.
+- **Without webhooks, garm does not know which runners are busy.** It does
+  not ask the forge in between, so `runner_status` stays `idle` while a job
+  runs. On Gitea that is fatal for the job when the runner is removed, as
+  Gitea deletes a busy runner where GitHub refuses. Seen in the VM test here:
+  with the `workflow_job` webhook delivered, garm marks the runner `active`
+  and the job survives its pool being deleted.
+- **Garm ignores when a Gitea job completes.** The `completed` event of
+  Gitea carries no runner name, garm logs "job never got assigned to a
+  runner, ignoring" and only replaces the runner when it next checks on all
+  of them.
+- **That check runs every five minutes and is not configurable**
+  (`PoolReapTimeoutInterval` in `runner/common/pool.go`). The VM test here
+  patches it to ten seconds. An option in `config.toml` would do, though
+  matching the completed job to its runner removes the need.
 
 ## Templates
 
