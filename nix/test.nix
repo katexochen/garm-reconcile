@@ -50,7 +50,8 @@ let
       };
   };
   system = pkgs.stdenv.hostPlatform.system;
-  incusImageMeta = releases.incusContainerMeta.${system} + "/tarball/nixos-image-lxc-*-${system}.tar.xz";
+  incusImageMeta =
+    releases.incusContainerMeta.${system} + "/tarball/nixos-image-lxc-*-${system}.tar.xz";
   incusImageRoot = releases.incusContainerImage.${system} + "/nixos-lxc-image-${system}.squashfs";
 
   # The host as seen from the runner containers.
@@ -136,7 +137,13 @@ let
 
   # The base state with some sections of gitea replaced.
   withGitea = sections: base // { gitea = base.gitea // sections; };
-  withPools = pools: withGitea { repositories."test/test" = repository // { inherit pools; }; };
+  withPools =
+    pools:
+    withGitea {
+      repositories."test/test" = repository // {
+        inherit pools;
+      };
+    };
 
   states = lib.mapAttrs (name: pkgs.writers.writeJSON "${name}.json") {
     initial = base;
@@ -300,7 +307,6 @@ in
       environment.systemPackages = [
         garm-reconcile
         pkgs.gitea
-        pkgs.jq
       ];
     };
 
@@ -490,11 +496,18 @@ in
         new_token("second")
         # GARM keeps secrets to itself, so there is no change to report.
         expect("apply", reconcile("apply", "initial"), [])
-        # Registering a runner takes a token that works.
-        wait_until("waiting for a new runner", lambda: unused_runner("first"))
+        # Replacing a runner takes a token that works, to remove the old
+        # one from Gitea and to register the new one.
+        wait_until("waiting for an idle runner", lambda: unused_runner("first"))
+        old = unused_runner("first")
+        for name in old:
+            # GARM refuses while the instance is not reported as running.
+            wait_until(f"deleting {name}", lambda: machine.execute(f"garm-cli runner delete {name}")[0] == 0)
+        wait_until("waiting for a new runner", lambda: set(unused_runner("first")) - set(old))
 
     with subtest("a replaced pool finishes its job before it is deleted"):
-        start_job("slow", "first", "sleep 120")
+        # The job runs until the test releases it.
+        start_job("slow", "first", "until [ -e /run/release ]; do sleep 1; done")
         wait_until("waiting for the job to start", lambda: job_status("slow") == ["running"])
         wait_until("waiting for garm to see the job", lambda: [r["runner_status"] for r in runners("first")] == ["active"])
         busy = [r["name"] for r in runners("first")]
@@ -531,6 +544,7 @@ in
         expect("job", job_status("slow"), ["running"])
         expect("runners of the old pool", [r["name"] for r in runners("first")], busy)
 
+        machine.succeed(f"incus exec {busy[0]} -- touch /run/release")
         wait_until("waiting for the job", lambda: job_status("slow") == ["success"])
         wait_until("waiting for the old pool to be deleted", lambda: list(pools()) == ["second"])
         wait_until(
