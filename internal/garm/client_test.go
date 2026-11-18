@@ -382,3 +382,71 @@ func TestTemplates(t *testing.T) {
 		t.Errorf("GetTemplate() after delete: error = %v, want not found", err)
 	}
 }
+
+func TestScaleSets(t *testing.T) {
+	ctx := context.Background()
+	client, srv := configuredClient(t)
+	err := client.CreateGithubCredentials(ctx, params.CreateGithubCredentialsParams{
+		Name: "main", Endpoint: "github.com", AuthType: params.ForgeAuthTypePAT,
+		PAT: params.GithubPAT{OAuth2Token: "ghp_token"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	org, err := client.CreateEntity(ctx, garm.Organization, garm.CreateEntityParams{
+		Name: "my-org", CredentialsName: "main", WebhookSecret: "secret",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	create := params.CreateScaleSetParams{
+		Name: "coco-set", ProviderName: "incus", Image: "ubuntu", Flavor: "default",
+		OSType: commonparams.Linux, OSArch: commonparams.Amd64, MaxRunners: 2, Enabled: true,
+		ExtraSpecs: []byte(`{"disable_updates":true}`),
+	}
+	if err := client.CreateEntityScaleSet(ctx, garm.Organization, org.ID, create); err != nil {
+		t.Fatal(err)
+	}
+	sets, err := client.ListEntityScaleSets(ctx, garm.Organization, org.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sets) != 1 || sets[0].Name != "coco-set" || sets[0].ExtraSpecs != nil {
+		t.Fatalf("ListEntityScaleSets() = %+v, want the created scale set without extra specs", sets)
+	}
+	id := sets[0].ID
+	set, err := client.GetScaleSet(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(set.ExtraSpecs) != `{"disable_updates":true}` {
+		t.Errorf("GetScaleSet() returned the extra specs %s, want the created ones", set.ExtraSpecs)
+	}
+
+	srv.State(func(st *garmtest.State) {
+		st.Instances = []*params.Instance{{Name: "set-idle", ScaleSetID: id, Status: commonparams.InstanceRunning, RunnerStatus: params.RunnerIdle}}
+	})
+	instances, err := client.ListScaleSetInstances(ctx, id)
+	if err != nil || len(instances) != 1 {
+		t.Fatalf("ListScaleSetInstances() = %+v, %v, want one instance", instances, err)
+	}
+	if err := client.DeleteScaleSet(ctx, id); !garm.IsBadRequest(err) {
+		t.Errorf("DeleteScaleSet() with runners: error = %v, want a bad request", err)
+	}
+	if err := client.DeleteInstance(ctx, "set-idle"); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.DeleteScaleSet(ctx, id); !garm.IsBadRequest(err) {
+		t.Errorf("DeleteScaleSet() of an enabled scale set: error = %v, want a bad request", err)
+	}
+	if err := client.DeleteEntity(ctx, garm.Organization, org.ID); !garm.IsBadRequest(err) {
+		t.Errorf("DeleteEntity() with a scale set: error = %v, want a bad request", err)
+	}
+	if err := client.UpdateScaleSet(ctx, id, params.UpdateScaleSetParams{Enabled: ptr(false)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.DeleteScaleSet(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+}

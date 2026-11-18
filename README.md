@@ -69,6 +69,15 @@ github:
           image: ubuntu:24.04
           flavor: default
           template: nixos # optional
+      scale_sets:
+        coco-set:
+          provider_name: incus
+          image: ubuntu:24.04
+          flavor: default
+          os_type: linux
+          os_arch: amd64
+          max_runners: 4
+          enabled: true
           os_type: linux
           os_arch: amd64
           tags: [coco]
@@ -84,7 +93,7 @@ github:
 ```
 
 Entities take `credentials_name`, `webhook_secret`, `pool_balancer_type`,
-`agent_mode` and `pools`. A webhook secret is generated when an entity is
+`agent_mode`, `pools` and `scale_sets`. A webhook secret is generated when an entity is
 created without one. Pools take the fields of garm's request to create a pool,
 except for `runner_prefix`.
 
@@ -97,6 +106,16 @@ that is unique within its entity and declare it under that name.
 
 The provider of a pool cannot be changed. Declaring another provider creates a
 new pool, and the existing one is deleted by `-prune`.
+
+### Scale sets
+
+Scale sets take the fields of garm's request to create a scale set, except for
+`name`, which is the name they are declared under, and `scale_set_id`. Like
+pools, they name their template in `template`.
+
+garm cannot change `provider_name`, `labels` and `disable_update` of a scale
+set. Changing them is an error. Declare the scale set under another name
+instead, and let `-prune` delete the existing one.
 
 ### Templates
 
@@ -129,11 +148,11 @@ controller and to log in. Changing it afterwards is not supported.
 
 1. It creates and updates everything that is declared. On a new controller it
    creates the admin user first.
-2. With `-prune`, it deletes pools, entities, templates and credentials that
-   are not declared.
+2. With `-prune`, it deletes pools, scale sets, entities, templates and
+   credentials that are not declared.
 
-A pool that has runners cannot be deleted. garm-reconcile disables the pool,
-removes its idle runners and waits for the remaining ones to finish their jobs.
+A pool or scale set that has runners cannot be deleted. garm-reconcile disables
+it, removes its idle runners and waits for the remaining ones to finish their jobs.
 It never removes a runner that executes a job. `-drain-timeout` limits how long
 the second phase may take. When it expires, `apply` fails and the pools stay
 disabled until the next run deletes them. Waiting cannot outlast the lifetime
@@ -169,8 +188,6 @@ With this unit, the state file references the secrets as
 ## Not supported yet
 
 - Custom GitHub endpoints and Gitea
-- Scale sets. `-prune` fails on an undeclared entity that has scale sets, as
-  garm does not delete such an entity.
 - Installing webhooks
 
 ## Development
@@ -184,5 +201,9 @@ in `$PATH`. `nix flake check` runs all tests against garm from nixpkgs, and
 `nix develop` provides it for `go test`.
 
 garm-reconcile is built against the request types of a garm release. After
-updating that dependency, `TestEnsureCoversAllPoolFields` fails if garm added a
-pool setting that is not reconciled yet.
+updating that dependency, `TestEnsureCoversAllPoolFields` and
+`TestEnsureCoversAllScaleSetFields` fail if garm added a setting that is not
+reconciled yet.
+
+garm talks to GitHub whenever a scale set is created, updated or deleted, so
+scale sets are only tested against the fake of the unit tests.

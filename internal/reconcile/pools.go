@@ -7,9 +7,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"time"
 
-	commonparams "github.com/cloudbase/garm-provider-common/params"
 	"github.com/cloudbase/garm/params"
 
 	"github.com/katexochen/garm-reconcile/internal/config"
@@ -181,14 +179,9 @@ func extraSpecs(specs json.RawMessage) json.RawMessage {
 	return specs
 }
 
-// stalePool is a pool that is not declared.
-type stalePool struct {
-	params.Pool
-	name string
-}
-
-func (r *Reconciler) stalePools(ctx context.Context) ([]stalePool, error) {
-	var stale []stalePool
+// stalePools returns the pools that are not declared.
+func (r *Reconciler) stalePools(ctx context.Context) ([]runnerSet, error) {
+	var stale []runnerSet
 	for _, kind := range entityKinds {
 		entities, err := r.githubEntities(ctx, kind)
 		if err != nil {
@@ -206,101 +199,21 @@ func (r *Reconciler) stalePools(ctx context.Context) ([]stalePool, error) {
 				if declared, ok := want.Pools[prefix]; ok && isPool(pool, prefix, declared.CreatePoolParams) {
 					continue
 				}
-				stale = append(stale, stalePool{Pool: pool, name: entity.FullName() + "/" + pool.GetRunnerPrefix()})
+				stale = append(stale, runnerSet{
+					kind:    KindPool,
+					name:    entity.FullName() + "/" + pool.GetRunnerPrefix(),
+					enabled: pool.Enabled,
+					disable: func(ctx context.Context) error {
+						disabled := false
+						return r.client.UpdatePool(ctx, pool.ID, params.UpdatePoolParams{Enabled: &disabled})
+					},
+					instances: func(ctx context.Context) ([]params.Instance, error) {
+						return r.client.ListPoolInstances(ctx, pool.ID)
+					},
+					delete: func(ctx context.Context) error { return r.client.DeletePool(ctx, pool.ID) },
+				})
 			}
 		}
 	}
 	return stale, nil
-}
-
-func (r *Reconciler) prunePools(ctx context.Context) error {
-	stale, err := r.stalePools(ctx)
-	if err != nil {
-		return err
-	}
-	for _, pool := range stale {
-		r.opts.Report(Change{Action: Delete, Kind: KindPool, Name: pool.name})
-	}
-	if r.opts.DryRun {
-		return nil
-	}
-
-	// All pools stop taking jobs before the first one is waited for.
-	for _, pool := range stale {
-		if !pool.Enabled {
-			continue
-		}
-		disabled := false
-		if err := r.client.UpdatePool(ctx, pool.ID, params.UpdatePoolParams{Enabled: &disabled}); err != nil {
-			return fmt.Errorf("disabling %s %s: %w", KindPool, pool.name, err)
-		}
-	}
-
-	var reported string
-	for {
-		stale, err = r.deleteDrained(ctx, stale)
-		if err != nil || len(stale) == 0 {
-			return err
-		}
-		names := make([]string, len(stale))
-		for i, pool := range stale {
-			names[i] = pool.name
-		}
-		waiting := "waiting for the runners of " + strings.Join(names, ", ")
-		if waiting != reported {
-			r.opts.Progress(waiting)
-			reported = waiting
-		}
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("%s: %w", waiting, ctx.Err())
-		case <-time.After(r.opts.PollInterval):
-		}
-	}
-}
-
-// deleteDrained deletes the pools that have no runners left and removes the
-// idle runners of the others, which it returns.
-func (r *Reconciler) deleteDrained(ctx context.Context, pools []stalePool) ([]stalePool, error) {
-	var remaining []stalePool
-	for _, pool := range pools {
-		instances, err := r.client.ListPoolInstances(ctx, pool.ID)
-		if err != nil {
-			return nil, fmt.Errorf("listing the runners of %s %s: %w", KindPool, pool.name, err)
-		}
-		if len(instances) == 0 {
-			err := r.client.DeletePool(ctx, pool.ID)
-			if err == nil {
-				continue
-			}
-			// A runner that was being created when the pool got
-			// disabled may have appeared in the meantime.
-			if !garm.IsBadRequest(err) {
-				return nil, fmt.Errorf("delete %s %s: %w", KindPool, pool.name, err)
-			}
-		}
-		for _, instance := range instances {
-			if !isIdle(instance) {
-				continue
-			}
-			// A runner that picked up a job in the meantime is
-			// protected by the forge, which refuses to remove it. One
-			// that finished its job may be gone already.
-			err := r.client.DeleteInstance(ctx, instance.Name)
-			if err != nil && !garm.IsBadRequest(err) && !garm.IsNotFound(err) {
-				return nil, fmt.Errorf("removing runner %s of %s %s: %w", instance.Name, KindPool, pool.name, err)
-			}
-		}
-		remaining = append(remaining, pool)
-	}
-	return remaining, nil
-}
-
-// isIdle reports whether an instance can be removed without interrupting a
-// job. That includes instances that failed to come up. Instances that are
-// still being created or deleted are left alone, as garm only accepts
-// removing settled ones.
-func isIdle(instance params.Instance) bool {
-	settled := instance.Status == commonparams.InstanceRunning || instance.Status == commonparams.InstanceError
-	return settled && instance.RunnerStatus != params.RunnerActive
 }

@@ -188,6 +188,40 @@ func (c *Client) DeletePool(ctx context.Context, id string) error {
 	return c.do(ctx, http.MethodDelete, nil, nil, "pools", id)
 }
 
+// ListEntityScaleSets lists the scale sets of an entity. Like listed pools,
+// they lack their extra specs, which GetScaleSet returns.
+func (c *Client) ListEntityScaleSets(ctx context.Context, kind EntityKind, entityID string) ([]params.ScaleSet, error) {
+	var sets []params.ScaleSet
+	err := c.do(ctx, http.MethodGet, nil, &sets, kind.collection(), entityID, "scalesets")
+	return sets, err
+}
+
+func (c *Client) GetScaleSet(ctx context.Context, id uint) (params.ScaleSet, error) {
+	var set params.ScaleSet
+	err := c.do(ctx, http.MethodGet, nil, &set, "scalesets", formatID(id))
+	return set, err
+}
+
+func (c *Client) CreateEntityScaleSet(ctx context.Context, kind EntityKind, entityID string, create params.CreateScaleSetParams) error {
+	return c.do(ctx, http.MethodPost, create, nil, kind.collection(), entityID, "scalesets")
+}
+
+func (c *Client) UpdateScaleSet(ctx context.Context, id uint, update params.UpdateScaleSetParams) error {
+	return c.do(ctx, http.MethodPut, update, nil, "scalesets", formatID(id))
+}
+
+// DeleteScaleSet deletes a scale set. Garm rejects the request with a bad
+// request error while the scale set is enabled or has runners.
+func (c *Client) DeleteScaleSet(ctx context.Context, id uint) error {
+	return c.do(ctx, http.MethodDelete, nil, nil, "scalesets", formatID(id))
+}
+
+func (c *Client) ListScaleSetInstances(ctx context.Context, id uint) ([]params.Instance, error) {
+	var instances []params.Instance
+	err := c.do(ctx, http.MethodGet, nil, &instances, "scalesets", formatID(id), "instances")
+	return instances, err
+}
+
 func (c *Client) ListPoolInstances(ctx context.Context, poolID string) ([]params.Instance, error) {
 	var instances []params.Instance
 	err := c.do(ctx, http.MethodGet, nil, &instances, "pools", poolID, "instances")

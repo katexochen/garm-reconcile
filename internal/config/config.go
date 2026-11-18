@@ -87,6 +87,9 @@ type Entity struct {
 	// Pools are keyed by their runner prefix, which identifies a pool
 	// within its entity.
 	Pools map[string]Pool `json:"pools,omitempty"`
+	// ScaleSets are keyed by their name, which is also the label jobs
+	// select them with.
+	ScaleSets map[string]ScaleSet `json:"scale_sets,omitempty"`
 }
 
 // Pool is a pool of runners. Its settings are the ones garm takes to create
@@ -97,6 +100,14 @@ type Pool struct {
 	// Template names the template that installs the runners, in place of
 	// the template ID garm takes. It may be a template garm ships. Garm
 	// picks one, and keeps the one a pool has, if it is empty.
+	Template string `json:"template,omitempty"`
+}
+
+// ScaleSet is a set of runners that GitHub schedules jobs on. Like for
+// pools, its settings are the ones garm takes to create one.
+type ScaleSet struct {
+	params.CreateScaleSetParams
+	// Template names the template that installs the runners, see Pool.
 	Template string `json:"template,omitempty"`
 }
 

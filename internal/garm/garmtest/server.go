@@ -33,6 +33,7 @@ type State struct {
 	Templates   []*params.Template
 	Entities    map[garm.EntityKind][]*Entity
 	Pools       []*params.Pool
+	ScaleSets   []*params.ScaleSet
 	Instances   []*params.Instance
 	// Mutations lists the requests that changed the state, as
 	// "METHOD /path".
@@ -103,11 +104,17 @@ func NewServer(t *testing.T) *Server {
 		mux.Handle("DELETE "+prefix+"/{id}", s.route(configured, deleteEntity(kind)))
 		mux.Handle("GET "+prefix+"/{id}/pools", s.route(configured, listEntityPools(kind)))
 		mux.Handle("POST "+prefix+"/{id}/pools", s.route(configured, createEntityPool(kind)))
+		mux.Handle("GET "+prefix+"/{id}/scalesets", s.route(configured, listEntityScaleSets(kind)))
+		mux.Handle("POST "+prefix+"/{id}/scalesets", s.route(configured, createEntityScaleSet(kind)))
 	}
 	mux.Handle("GET /api/v1/pools/{id}", s.route(configured, (*State).getPool))
 	mux.Handle("PUT /api/v1/pools/{id}", s.route(configured, (*State).updatePool))
 	mux.Handle("DELETE /api/v1/pools/{id}", s.route(configured, (*State).deletePool))
 	mux.Handle("GET /api/v1/pools/{id}/instances", s.route(configured, (*State).listPoolInstances))
+	mux.Handle("GET /api/v1/scalesets/{id}", s.route(configured, (*State).getScaleSet))
+	mux.Handle("PUT /api/v1/scalesets/{id}", s.route(configured, (*State).updateScaleSet))
+	mux.Handle("DELETE /api/v1/scalesets/{id}", s.route(configured, (*State).deleteScaleSet))
+	mux.Handle("GET /api/v1/scalesets/{id}/instances", s.route(configured, (*State).listScaleSetInstances))
 	mux.Handle("DELETE /api/v1/instances/{name}", s.route(configured, (*State).deleteInstance))
 
 	srv := httptest.NewServer(mux)
@@ -461,6 +468,11 @@ func (st *State) deleteTemplate(r *http.Request) (any, error) {
 			return nil, badRequest("cannot delete template while in use by pools or scale sets")
 		}
 	}
+	for _, set := range st.ScaleSets {
+		if set.TemplateID == template.ID {
+			return nil, badRequest("cannot delete template while in use by pools or scale sets")
+		}
+	}
 	st.Templates = slices.DeleteFunc(st.Templates, func(t *params.Template) bool { return t == template })
 	return nil, nil
 }
@@ -594,6 +606,9 @@ func deleteEntity(kind garm.EntityKind) handler {
 		}
 		if len(st.entityPools(entity)) > 0 {
 			return nil, badRequest("%s has pools defined", kind)
+		}
+		if len(st.entityScaleSets(entity)) > 0 {
+			return nil, badRequest("%s has scale sets defined; delete them first", kind)
 		}
 		st.Entities[kind] = slices.DeleteFunc(st.Entities[kind], func(e *Entity) bool { return e == entity })
 		return nil, nil
@@ -806,4 +821,192 @@ func (st *State) deleteInstance(r *http.Request) (any, error) {
 	}
 	st.Instances = slices.Delete(st.Instances, idx, idx+1)
 	return nil, nil
+}
+
+func (st *State) entityScaleSets(entity *Entity) []*params.ScaleSet {
+	var sets []*params.ScaleSet
+	for _, set := range st.ScaleSets {
+		if entity.ID == set.RepoID || entity.ID == set.OrgID || entity.ID == set.EnterpriseID {
+			sets = append(sets, set)
+		}
+	}
+	return sets
+}
+
+// listEntityScaleSets leaves out the extra specs, like garm.
+func listEntityScaleSets(kind garm.EntityKind) handler {
+	return func(st *State, r *http.Request) (any, error) {
+		entity, err := st.entityByID(kind, r)
+		if err != nil {
+			return nil, err
+		}
+		sets := []params.ScaleSet{}
+		for _, set := range st.entityScaleSets(entity) {
+			listed := *set
+			listed.ExtraSpecs = nil
+			sets = append(sets, listed)
+		}
+		return sets, nil
+	}
+}
+
+func createEntityScaleSet(kind garm.EntityKind) handler {
+	return func(st *State, r *http.Request) (any, error) {
+		entity, err := st.entityByID(kind, r)
+		if err != nil {
+			return nil, err
+		}
+		create, err := decode[params.CreateScaleSetParams](r)
+		if err != nil {
+			return nil, err
+		}
+		if err := create.Validate(); err != nil {
+			return nil, badRequest("%v", err)
+		}
+		for _, set := range st.entityScaleSets(entity) {
+			if set.Name == create.Name {
+				return nil, conflict("scale set %s already exists", create.Name)
+			}
+		}
+		set := &params.ScaleSet{
+			RunnerPrefix:           create.RunnerPrefix,
+			ID:                     st.newID(),
+			Name:                   create.Name,
+			DisableUpdate:          create.DisableUpdate,
+			State:                  params.ScaleSetCreated,
+			ProviderName:           create.ProviderName,
+			MaxRunners:             create.MaxRunners,
+			MinIdleRunners:         create.MinIdleRunners,
+			Image:                  create.Image,
+			Flavor:                 create.Flavor,
+			OSType:                 create.OSType,
+			OSArch:                 create.OSArch,
+			Enabled:                create.Enabled,
+			EnableShell:            create.EnableShell,
+			RunnerBootstrapTimeout: create.RunnerBootstrapTimeout,
+			ExtraSpecs:             create.ExtraSpecs,
+			GitHubRunnerGroup:      create.GitHubRunnerGroup,
+		}
+		for _, label := range create.Labels {
+			set.Tags = append(set.Tags, params.Tag{ID: label, Name: label})
+		}
+		if set.RunnerBootstrapTimeout == 0 {
+			set.RunnerBootstrapTimeout = appdefaults.DefaultRunnerBootstrapTimeout
+		}
+		if set.GitHubRunnerGroup == "" {
+			set.GitHubRunnerGroup = "Default"
+		}
+		for _, t := range st.Templates {
+			if create.TemplateID == nil && t.Owner == params.SystemUser && t.OSType == create.OSType {
+				create.TemplateID = &t.ID
+			}
+		}
+		template := st.templateByID(formatID(*create.TemplateID))
+		if template == nil {
+			return nil, badRequest("failed to find suitable template")
+		}
+		set.TemplateID, set.TemplateName = template.ID, template.Name
+		switch kind {
+		case garm.Repository:
+			set.RepoID = entity.ID
+		case garm.Organization:
+			set.OrgID = entity.ID
+		case garm.Enterprise:
+			set.EnterpriseID = entity.ID
+		}
+		st.ScaleSets = append(st.ScaleSets, set)
+		return *set, nil
+	}
+}
+
+func (st *State) scaleSetByID(r *http.Request) *params.ScaleSet {
+	for _, set := range st.ScaleSets {
+		if formatID(set.ID) == r.PathValue("id") {
+			return set
+		}
+	}
+	return nil
+}
+
+func (st *State) getScaleSet(r *http.Request) (any, error) {
+	set := st.scaleSetByID(r)
+	if set == nil {
+		return nil, notFound()
+	}
+	return *set, nil
+}
+
+// updateScaleSet applies an update the way garm does, see updatePool.
+func (st *State) updateScaleSet(r *http.Request) (any, error) {
+	set := st.scaleSetByID(r)
+	if set == nil {
+		return nil, notFound()
+	}
+	update, err := decode[params.UpdateScaleSetParams](r)
+	if err != nil {
+		return nil, err
+	}
+	if update.RunnerBootstrapTimeout != nil && *update.RunnerBootstrapTimeout == 0 {
+		return nil, badRequest("runner_bootstrap_timeout cannot be 0")
+	}
+
+	setString(&set.Prefix, update.Prefix)
+	setString(&set.Name, update.Name)
+	setString(&set.Image, update.Image)
+	setString(&set.Flavor, update.Flavor)
+	setString((*string)(&set.OSType), string(update.OSType))
+	setString((*string)(&set.OSArch), string(update.OSArch))
+	setPointer(&set.Enabled, update.Enabled)
+	setPointer(&set.MaxRunners, update.MaxRunners)
+	setPointer(&set.MinIdleRunners, update.MinIdleRunners)
+	setPointer(&set.RunnerBootstrapTimeout, update.RunnerBootstrapTimeout)
+	setPointer(&set.EnableShell, update.EnableShell)
+	setPointer(&set.GitHubRunnerGroup, update.GitHubRunnerGroup)
+	if update.ExtraSpecs != nil {
+		set.ExtraSpecs = update.ExtraSpecs
+	}
+	if update.TemplateID != nil {
+		template := st.templateByID(formatID(*update.TemplateID))
+		if template == nil {
+			return nil, badRequest("failed to find template")
+		}
+		set.TemplateID, set.TemplateName = template.ID, template.Name
+	}
+	if set.MinIdleRunners > set.MaxRunners {
+		return nil, badRequest("min_idle_runners cannot be larger than max_runners")
+	}
+	return *set, nil
+}
+
+func (st *State) scaleSetInstances(id uint) []params.Instance {
+	instances := []params.Instance{}
+	for _, i := range st.Instances {
+		if i.ScaleSetID == id && id != 0 {
+			instances = append(instances, *i)
+		}
+	}
+	return instances
+}
+
+func (st *State) deleteScaleSet(r *http.Request) (any, error) {
+	set := st.scaleSetByID(r)
+	if set == nil {
+		return nil, nil
+	}
+	if len(st.scaleSetInstances(set.ID)) > 0 {
+		return nil, badRequest("scale set has runners")
+	}
+	if set.Enabled {
+		return nil, badRequest("scale set is enabled; disable it first")
+	}
+	st.ScaleSets = slices.DeleteFunc(st.ScaleSets, func(s *params.ScaleSet) bool { return s == set })
+	return nil, nil
+}
+
+func (st *State) listScaleSetInstances(r *http.Request) (any, error) {
+	set := st.scaleSetByID(r)
+	if set == nil {
+		return nil, notFound()
+	}
+	return st.scaleSetInstances(set.ID), nil
 }

@@ -75,6 +75,9 @@ func (r *Reconciler) ensureEntities(ctx context.Context) error {
 			if err := r.ensurePools(ctx, kind, name, id, want.Pools); err != nil {
 				return err
 			}
+			if err := r.ensureScaleSets(ctx, kind, name, id, want.ScaleSets); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

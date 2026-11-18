@@ -176,17 +176,53 @@ func (f Forge) validateEntity(path string, e Entity, p *problems) {
 			p.addf("%s: %w", poolPath, err)
 		}
 		validateOSType(p, poolPath, pool.OSType)
-		if pool.TemplateID != nil {
-			p.addf("%s.template_id: must not be set, name the template in template instead", poolPath)
+		f.validateTemplate(p, poolPath, pool.Template, pool.TemplateID, pool.OSType)
+		validateOSArch(p, poolPath, pool.OSArch)
+	}
+	f.validateScaleSets(path, e, p)
+}
+
+func (f Forge) validateScaleSets(path string, e Entity, p *problems) {
+	for _, name := range sortedKeys(e.ScaleSets) {
+		set := e.ScaleSets[name]
+		setPath := fmt.Sprintf("%s.scale_sets.%s", path, name)
+		if name == "" {
+			p.addf("%s.scale_sets: names must not be empty", path)
 		}
-		if tpl, ok := f.Templates[pool.Template]; ok && tpl.OSType != pool.OSType {
-			p.addf("%s.template: template %s is for %s", poolPath, pool.Template, tpl.OSType)
+		if set.Name != "" {
+			p.addf("%s.name: must not be set, the scale set is named by its key", setPath)
 		}
-		switch pool.OSArch {
-		case commonparams.Amd64, commonparams.Arm64, commonparams.Arm:
-		default:
-			p.addf("%s.os_arch: must be amd64, arm64 or arm", poolPath)
+		if set.ScaleSetID != 0 {
+			p.addf("%s.scale_set_id: must not be set, GitHub assigns it", setPath)
 		}
+		if set.Prefix != "" && !runnerPrefix.MatchString(set.Prefix) {
+			p.addf("%s.runner_prefix: must consist of lowercase letters, digits and dashes", setPath)
+		}
+		set.Name = name
+		if err := set.Validate(); err != nil {
+			p.addf("%s: %w", setPath, err)
+		}
+		validateOSType(p, setPath, set.OSType)
+		validateOSArch(p, setPath, set.OSArch)
+		f.validateTemplate(p, setPath, set.Template, set.TemplateID, set.OSType)
+	}
+}
+
+func validateOSArch(p *problems, path string, arch commonparams.OSArch) {
+	switch arch {
+	case commonparams.Amd64, commonparams.Arm64, commonparams.Arm:
+	default:
+		p.addf("%s.os_arch: must be amd64, arm64 or arm", path)
+	}
+}
+
+// validateTemplate checks the template a pool or scale set at path names.
+func (f Forge) validateTemplate(p *problems, path, template string, id *uint, osType commonparams.OSType) {
+	if id != nil {
+		p.addf("%s.template_id: must not be set, name the template in template instead", path)
+	}
+	if tpl, ok := f.Templates[template]; ok && tpl.OSType != osType {
+		p.addf("%s.template: template %s is for %s", path, template, tpl.OSType)
 	}
 }
 

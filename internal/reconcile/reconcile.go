@@ -65,14 +65,15 @@ const (
 	KindCredentials Kind = "github credentials"
 	KindTemplate    Kind = "github template"
 	KindPool        Kind = "pool"
+	KindScaleSet    Kind = "scale set"
 )
 
 // Options configure a Reconciler.
 type Options struct {
 	// DryRun reports changes without applying them.
 	DryRun bool
-	// Report is called with every change before it is applied. Pools to
-	// delete are reported when Prune starts to drain them.
+	// Report is called with every change before it is applied. Pools and
+	// scale sets to delete are reported when Prune starts to drain them.
 	Report func(Change)
 	// Progress is called with what Prune is waiting for, whenever that
 	// changes.
@@ -130,11 +131,11 @@ func (r *Reconciler) Ensure(ctx context.Context) error {
 // Prune deletes the resources that are not declared. It must be called after
 // Ensure.
 //
-// Pools are disabled first, so that they take no new jobs. Their idle
-// runners are removed, and Prune blocks until the remaining runners finished
-// their jobs before it deletes the pools.
+// Pools and scale sets are disabled first, so that they take no new jobs.
+// Their idle runners are removed, and Prune blocks until the remaining
+// runners finished their jobs before it deletes them.
 func (r *Reconciler) Prune(ctx context.Context) error {
-	if err := r.prunePools(ctx); err != nil {
+	if err := r.pruneRunners(ctx); err != nil {
 		return err
 	}
 	if err := r.pruneEntities(ctx); err != nil {

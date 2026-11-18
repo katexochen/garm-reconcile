@@ -56,6 +56,24 @@ func TestValidate(t *testing.T) {
 			c.GitHub.Organizations["my-org"].Pools[name] = pool
 		}
 	}
+	withScaleSet := func(change func(*ScaleSet)) func(*Config) {
+		return func(c *Config) {
+			set := ScaleSet{CreateScaleSetParams: params.CreateScaleSetParams{
+				ProviderName: "incus", Image: "ubuntu", Flavor: "default",
+				OSType: "linux", OSArch: "amd64", MaxRunners: 2,
+			}}
+			change(&set)
+			org := c.GitHub.Organizations["my-org"]
+			org.ScaleSets = map[string]ScaleSet{"coco-set": set}
+			c.GitHub.Organizations["my-org"] = org
+		}
+	}
+	if cfg := validConfig(); true {
+		withScaleSet(func(*ScaleSet) {})(cfg)
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("valid scale set rejected: %v", err)
+		}
+	}
 	withCredentials := func(creds Credentials) func(*Config) {
 		return func(c *Config) { c.GitHub.Credentials["main"] = creds }
 	}
@@ -174,6 +192,30 @@ func TestValidate(t *testing.T) {
 		"template without OS type": {
 			change:  func(c *Config) { c.GitHub.Templates = map[string]Template{"tpl": {Data: "#!/bin/sh"}} },
 			wantErr: "github.templates.tpl.os_type: must be linux or windows",
+		},
+		"scale set with name": {
+			change:  withScaleSet(func(s *ScaleSet) { s.Name = "other" }),
+			wantErr: "github.organizations.my-org.scale_sets.coco-set.name: must not be set",
+		},
+		"scale set with GitHub ID": {
+			change:  withScaleSet(func(s *ScaleSet) { s.ScaleSetID = 3 }),
+			wantErr: "github.organizations.my-org.scale_sets.coco-set.scale_set_id: must not be set",
+		},
+		"scale set with invalid runner prefix": {
+			change:  withScaleSet(func(s *ScaleSet) { s.Prefix = "Co_Co" }),
+			wantErr: "github.organizations.my-org.scale_sets.coco-set.runner_prefix: must consist of",
+		},
+		"scale set with template ID": {
+			change:  withScaleSet(func(s *ScaleSet) { id := uint(1); s.TemplateID = &id }),
+			wantErr: "github.organizations.my-org.scale_sets.coco-set.template_id: must not be set",
+		},
+		"scale set without architecture": {
+			change:  withScaleSet(func(s *ScaleSet) { s.OSArch = "" }),
+			wantErr: "github.organizations.my-org.scale_sets.coco-set.os_arch: must be amd64, arm64 or arm",
+		},
+		"scale set rejected by garm": {
+			change:  withScaleSet(func(s *ScaleSet) { s.Image = "" }),
+			wantErr: "github.organizations.my-org.scale_sets.coco-set: missing image",
 		},
 		"pool rejected by garm": {
 			change:  withPool("coco", func(p *Pool) { p.MinIdleRunners = 3 }),

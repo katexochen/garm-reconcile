@@ -46,8 +46,20 @@ the workaround named with it can go.
 - **A pool with runners cannot be deleted**, and a disabled pool keeps its
   idle runners (`scaleDownOnePool` skips disabled pools). A way to ask garm to
   drain and delete a pool would replace `prunePools` and `deleteDrained`.
-- **An entity with scale sets cannot be deleted**, and scale sets are not
-  managed here yet, so `-prune` fails on such an entity.
+- **A scale set must be disabled before it can be deleted**, in addition to
+  having no runners. The same request would cover it.
+
+## Scale sets
+
+- **Labels and `disable_update` cannot be updated**, although
+  `UpdateScaleSetParams` exists. Changing them here is an error.
+- **Every scale set request talks to GitHub.** Creating one looks up the
+  runner group, updating and deleting call the scale set API. None of it can
+  run against a controller without GitHub, so the integration test here does
+  not cover scale sets. Deferring the GitHub side to the scale set worker,
+  like the state `pending_create` suggests, would make the API testable.
+- **The runner group is `github-runner-group` on create and `runner_group` on
+  update.**
 
 ## Validation
 
