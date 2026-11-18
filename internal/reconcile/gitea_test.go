@@ -1,0 +1,138 @@
+package reconcile_test
+
+import (
+	"context"
+	"strings"
+	"testing"
+
+	"github.com/cloudbase/garm/params"
+
+	"github.com/katexochen/garm-reconcile/internal/config"
+	"github.com/katexochen/garm-reconcile/internal/garm"
+	"github.com/katexochen/garm-reconcile/internal/garm/garmtest"
+)
+
+func withGitea() *config.Config {
+	cfg := desiredState()
+	cfg.Gitea = config.Forge{
+		Endpoints: map[string]config.Endpoint{
+			"local": {
+				APIBaseURL:       "http://gitea/api/v1",
+				BaseURL:          "http://gitea",
+				ToolsMetadataURL: "http://gitea/releases.json",
+			},
+		},
+		Credentials: map[string]config.Credentials{
+			"main": {Endpoint: "local", PAT: &config.PAT{OAuth2Token: "gitea_token"}},
+		},
+		Templates: map[string]config.Template{
+			"nixos": {OSType: "linux", Data: "#!/bin/sh"},
+		},
+		Repositories: map[string]config.Entity{
+			"owner/repo": {
+				CredentialsName: "main",
+				Pools:           map[string]config.Pool{"coco": pool(), "nixos": pool()},
+			},
+		},
+	}
+	nixos := cfg.Gitea.Repositories["owner/repo"].Pools["nixos"]
+	nixos.Template = "nixos"
+	cfg.Gitea.Repositories["owner/repo"].Pools["nixos"] = nixos
+	return cfg
+}
+
+// TestGitea reconciles resources that have namesakes on GitHub.
+func TestGitea(t *testing.T) {
+	cfg := withGitea()
+	srv := garmtest.NewServer(t)
+
+	changes := run{srv: srv, cfg: cfg}.ensure(t)
+	assertEqual(t, "changes", changes[len(changes)-6:], []string{
+		"create gitea endpoint local",
+		"create gitea credentials main",
+		"create gitea template nixos",
+		"create gitea repository owner/repo",
+		"create pool owner/repo/coco",
+		"create pool owner/repo/nixos",
+	})
+	srv.State(func(st *garmtest.State) {
+		assertEqual(t, "endpoints", len(st.Endpoints), 2)
+		assertEqual(t, "tools metadata URL", st.Endpoints[1].ToolsMetadataURL, "http://gitea/releases.json")
+		assertEqual(t, "credentials", len(st.Credentials), 2)
+		assertEqual(t, "token", st.Credentials[1].PAT.OAuth2Token, "gitea_token")
+		assertEqual(t, "repositories", len(st.Entities[garm.Repository]), 2)
+		repo := st.Entities[garm.Repository][1]
+		assertEqual(t, "forge of the repository", repo.Endpoint.EndpointType, params.GiteaEndpointType)
+		assertEqual(t, "endpoint of the repository", repo.Endpoint.Name, "local")
+		for _, p := range st.Pools {
+			if p.RepoID != repo.ID {
+				continue
+			}
+			want := map[string]string{"coco": "gitea_linux", "nixos": "nixos"}[p.Prefix]
+			assertEqual(t, "template of pool "+p.Prefix, p.TemplateName, want)
+		}
+	})
+	assertEqual(t, "changes of the second run", run{srv: srv, cfg: cfg}.prune(t), nil)
+
+	endpoint := cfg.Gitea.Endpoints["local"]
+	endpoint.Description = "changed"
+	endpoint.ToolsMetadataURL = "http://gitea/other.json"
+	cfg.Gitea.Endpoints["local"] = endpoint
+	want := []string{"update gitea endpoint local (description, tools_metadata_url)"}
+	assertEqual(t, "changes to plan", run{srv: srv, cfg: cfg, dryRun: true}.ensure(t), want)
+	assertEqual(t, "changes", run{srv: srv, cfg: cfg}.ensure(t), want)
+
+	// Everything on Gitea goes away, the namesakes on GitHub stay.
+	cfg.Gitea = config.Forge{}
+	assertEqual(t, "changes to prune", run{srv: srv, cfg: cfg}.prune(t), []string{
+		"delete pool owner/repo/coco",
+		"delete pool owner/repo/nixos",
+		"delete gitea repository owner/repo",
+		"delete gitea template nixos",
+		"delete gitea credentials main",
+		"delete gitea endpoint local",
+	})
+	srv.State(func(st *garmtest.State) {
+		assertEqual(t, "endpoints", len(st.Endpoints), 1)
+		assertEqual(t, "endpoint", st.Endpoints[0].Name, "github.com")
+		assertEqual(t, "credentials", len(st.Credentials), 1)
+		assertEqual(t, "repositories", len(st.Entities[garm.Repository]), 1)
+		assertEqual(t, "pools", len(st.Pools), 1)
+	})
+}
+
+func TestEndpointURLOfUsedEndpointCannotChange(t *testing.T) {
+	cfg := withGitea()
+	srv := initialized(t, cfg)
+	endpoint := cfg.Gitea.Endpoints["local"]
+	endpoint.BaseURL = "http://moved"
+	cfg.Gitea.Endpoints["local"] = endpoint
+
+	rec, _ := run{srv: srv, cfg: cfg}.reconciler(t)
+	err := rec.Ensure(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "update gitea endpoint local (base_url): garm: Bad Request: cannot update endpoint URLs") {
+		t.Errorf("Ensure() = %v, want garm to refuse the new URL", err)
+	}
+}
+
+func TestCustomGitHubEndpoint(t *testing.T) {
+	cfg := desiredState()
+	cfg.GitHub.Endpoints = map[string]config.Endpoint{
+		"ghes": {
+			APIBaseURL:    "https://ghes.example.com/api/v3",
+			BaseURL:       "https://ghes.example.com",
+			UploadBaseURL: "https://ghes.example.com/api/uploads",
+			CACertBundle:  "-----BEGIN CERTIFICATE-----",
+		},
+	}
+	cfg.GitHub.Credentials["main"] = config.Credentials{Endpoint: "ghes", PAT: &config.PAT{OAuth2Token: "t"}}
+	srv := garmtest.NewServer(t)
+
+	changes := run{srv: srv, cfg: cfg}.ensure(t)
+	assertEqual(t, "changes", changes[2:4], []string{"create github endpoint ghes", "create github credentials main"})
+	srv.State(func(st *garmtest.State) {
+		assertEqual(t, "CA bundle", string(st.Endpoints[1].CACertBundle), "-----BEGIN CERTIFICATE-----")
+		assertEqual(t, "endpoint of the organization", st.Entities[garm.Organization][0].Endpoint.Name, "ghes")
+	})
+	assertEqual(t, "changes of the second run", run{srv: srv, cfg: cfg}.prune(t), nil)
+}

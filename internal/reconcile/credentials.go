@@ -11,20 +11,20 @@ import (
 	"github.com/katexochen/garm-reconcile/internal/config"
 )
 
-func (r *Reconciler) ensureCredentials(ctx context.Context) error {
-	existing, err := r.client.ListGithubCredentials(ctx)
+func (r *Reconciler) ensureCredentials(ctx context.Context, f *forge) error {
+	existing, err := r.client.ListCredentials(ctx, f.typ)
 	if err != nil {
-		return fmt.Errorf("listing %s: %w", KindCredentials, err)
+		return fmt.Errorf("listing %s: %w", f.kind("credentials"), err)
 	}
-	for _, name := range sortedKeys(r.cfg.GitHub.Credentials) {
-		want := r.cfg.GitHub.Credentials[name]
+	for _, name := range sortedKeys(f.cfg.Credentials) {
+		want := f.cfg.Credentials[name]
 		idx := slices.IndexFunc(existing, func(c params.ForgeCredentials) bool {
 			return strings.EqualFold(c.Name, name)
 		})
 		if idx < 0 {
-			err = r.createCredentials(ctx, name, want)
+			err = r.createCredentials(ctx, f, name, want)
 		} else {
-			err = r.updateCredentials(ctx, name, want, existing[idx])
+			err = r.updateCredentials(ctx, f, name, want, existing[idx])
 		}
 		if err != nil {
 			return err
@@ -33,7 +33,7 @@ func (r *Reconciler) ensureCredentials(ctx context.Context) error {
 	return nil
 }
 
-func (r *Reconciler) createCredentials(ctx context.Context, name string, want config.Credentials) error {
+func (r *Reconciler) createCredentials(ctx context.Context, f *forge, name string, want config.Credentials) error {
 	create := params.CreateGithubCredentialsParams{
 		Name:        name,
 		Description: want.Description,
@@ -45,22 +45,22 @@ func (r *Reconciler) createCredentials(ctx context.Context, name string, want co
 	} else {
 		create.App = githubApp(want.App)
 	}
-	return r.apply(Change{Action: Create, Kind: KindCredentials, Name: name}, func() error {
-		return r.client.CreateGithubCredentials(ctx, create)
+	return r.apply(Change{Action: Create, Kind: f.kind("credentials"), Name: name}, func() error {
+		return r.client.CreateCredentials(ctx, f.typ, create)
 	})
 }
 
-func (r *Reconciler) updateCredentials(ctx context.Context, name string, want config.Credentials, have params.ForgeCredentials) error {
+func (r *Reconciler) updateCredentials(ctx context.Context, f *forge, name string, want config.Credentials, have params.ForgeCredentials) error {
 	// Garm cannot change these, and the credentials cannot be replaced
 	// under the same name without taking the runners of their entities
 	// down.
 	if !strings.EqualFold(want.Endpoint, have.Endpoint.Name) {
 		return fmt.Errorf("%s %s: the endpoint cannot be changed from %s to %s, declare new credentials instead",
-			KindCredentials, name, have.Endpoint.Name, want.Endpoint)
+			f.kind("credentials"), name, have.Endpoint.Name, want.Endpoint)
 	}
 	if authType(want) != have.AuthType {
 		return fmt.Errorf("%s %s: the authentication cannot be changed from %s to %s, declare new credentials instead",
-			KindCredentials, name, have.AuthType, authType(want))
+			f.kind("credentials"), name, have.AuthType, authType(want))
 	}
 
 	update := params.UpdateGithubCredentialsParams{Description: &want.Description}
@@ -72,30 +72,30 @@ func (r *Reconciler) updateCredentials(ctx context.Context, name string, want co
 		update.App = &app
 	}
 	if want.Description != have.Description {
-		r.opts.Report(Change{Action: Update, Kind: KindCredentials, Name: name, Fields: []string{"description"}})
+		r.opts.Report(Change{Action: Update, Kind: f.kind("credentials"), Name: name, Fields: []string{"description"}})
 	}
 	if r.opts.DryRun {
 		return nil
 	}
 	// Garm does not reveal whether the secret changed, so it is always
 	// sent.
-	if err := r.client.UpdateGithubCredentials(ctx, have.ID, update); err != nil {
-		return fmt.Errorf("update %s %s: %w", KindCredentials, name, err)
+	if err := r.client.UpdateCredentials(ctx, f.typ, have.ID, update); err != nil {
+		return fmt.Errorf("update %s %s: %w", f.kind("credentials"), name, err)
 	}
 	return nil
 }
 
-func (r *Reconciler) pruneCredentials(ctx context.Context) error {
-	existing, err := r.client.ListGithubCredentials(ctx)
+func (r *Reconciler) pruneCredentials(ctx context.Context, f *forge) error {
+	existing, err := r.client.ListCredentials(ctx, f.typ)
 	if err != nil {
-		return fmt.Errorf("listing %s: %w", KindCredentials, err)
+		return fmt.Errorf("listing %s: %w", f.kind("credentials"), err)
 	}
 	for _, have := range existing {
-		if r.declaresCredentials(have.Name) {
+		if f.declaresCredentials(have.Name) {
 			continue
 		}
-		err := r.apply(Change{Action: Delete, Kind: KindCredentials, Name: have.Name}, func() error {
-			return r.client.DeleteGithubCredentials(ctx, have.ID)
+		err := r.apply(Change{Action: Delete, Kind: f.kind("credentials"), Name: have.Name}, func() error {
+			return r.client.DeleteCredentials(ctx, f.typ, have.ID)
 		})
 		if err != nil {
 			return err
@@ -104,8 +104,8 @@ func (r *Reconciler) pruneCredentials(ctx context.Context) error {
 	return nil
 }
 
-func (r *Reconciler) declaresCredentials(name string) bool {
-	for declared := range r.cfg.GitHub.Credentials {
+func (f *forge) declaresCredentials(name string) bool {
+	for declared := range f.cfg.Credentials {
 		if strings.EqualFold(declared, name) {
 			return true
 		}

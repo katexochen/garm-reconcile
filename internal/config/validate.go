@@ -31,6 +31,8 @@ func (c *Config) Validate() error {
 	c.Admin.validate(&p)
 	c.Controller.validate(&p)
 	c.GitHub.validate("github", &p)
+	c.Gitea.validate("gitea", &p)
+	c.Gitea.validateGitea(&p)
 	return errors.Join(p...)
 }
 
@@ -71,13 +73,24 @@ func validateURL(p *problems, path, value string, required bool) {
 }
 
 func (f Forge) validate(path string, p *problems) {
+	validateNames(p, path+".endpoints", f.Endpoints)
+	for _, name := range sortedKeys(f.Endpoints) {
+		f.Endpoints[name].validate(fmt.Sprintf("%s.endpoints.%s", path, name), path == "github", p)
+	}
 	validateNames(p, path+".credentials", f.Credentials)
 	validateNames(p, path+".repositories", f.Repositories)
 	validateNames(p, path+".organizations", f.Organizations)
 	validateNames(p, path+".enterprises", f.Enterprises)
 
 	for _, name := range sortedKeys(f.Credentials) {
-		f.Credentials[name].validate(fmt.Sprintf("%s.credentials.%s", path, name), p)
+		credsPath := fmt.Sprintf("%s.credentials.%s", path, name)
+		creds := f.Credentials[name]
+		creds.validate(credsPath, p)
+		_, declared := f.Endpoints[creds.Endpoint]
+		shipped := path == "github" && creds.Endpoint == DefaultGitHubEndpoint
+		if creds.Endpoint != "" && !declared && !shipped {
+			p.addf("%s.endpoint: endpoint %q is not declared", credsPath, creds.Endpoint)
+		}
 	}
 	for _, name := range sortedKeys(f.Templates) {
 		f.Templates[name].validate(fmt.Sprintf("%s.templates.%s", path, name), p)
@@ -111,6 +124,42 @@ func validateNames[V any](p *problems, path string, declared map[string]V) {
 			p.addf("%s: %s and %s only differ in case", path, other, name)
 		}
 		seen[lower] = name
+	}
+}
+
+// validateGitea reports what is declared for Gitea, but only exists on
+// GitHub.
+func (f Forge) validateGitea(p *problems) {
+	for _, name := range sortedKeys(f.Credentials) {
+		if f.Credentials[name].App != nil {
+			p.addf("gitea.credentials.%s.app: Gitea has no apps, use pat", name)
+		}
+	}
+	if len(f.Enterprises) > 0 {
+		p.addf("gitea.enterprises: Gitea has no enterprises")
+	}
+	for _, name := range sortedKeys(f.Repositories) {
+		if len(f.Repositories[name].ScaleSets) > 0 {
+			p.addf("gitea.repositories.%s.scale_sets: Gitea has no scale sets", name)
+		}
+	}
+	for _, name := range sortedKeys(f.Organizations) {
+		if len(f.Organizations[name].ScaleSets) > 0 {
+			p.addf("gitea.organizations.%s.scale_sets: Gitea has no scale sets", name)
+		}
+	}
+}
+
+func (e Endpoint) validate(path string, github bool, p *problems) {
+	validateURL(p, path+".api_base_url", e.APIBaseURL, true)
+	validateURL(p, path+".base_url", e.BaseURL, true)
+	validateURL(p, path+".upload_base_url", e.UploadBaseURL, github)
+	validateURL(p, path+".tools_metadata_url", e.ToolsMetadataURL, false)
+	if !github && e.UploadBaseURL != "" {
+		p.addf("%s.upload_base_url: Gitea endpoints have no upload URL", path)
+	}
+	if github && e.ToolsMetadataURL != "" {
+		p.addf("%s.tools_metadata_url: only Gitea endpoints have a tools metadata URL", path)
 	}
 }
 

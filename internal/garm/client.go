@@ -91,22 +91,45 @@ func (c *Client) UpdateController(ctx context.Context, update params.UpdateContr
 	return c.do(ctx, http.MethodPut, update, nil, "controller")
 }
 
-func (c *Client) ListGithubCredentials(ctx context.Context) ([]params.ForgeCredentials, error) {
+func (c *Client) ListEndpoints(ctx context.Context, forge params.EndpointType) ([]params.ForgeEndpoint, error) {
+	var endpoints []params.ForgeEndpoint
+	err := c.do(ctx, http.MethodGet, nil, &endpoints, string(forge), "endpoints")
+	return endpoints, err
+}
+
+func (c *Client) CreateEndpoint(ctx context.Context, forge params.EndpointType, create CreateEndpointParams) error {
+	return c.do(ctx, http.MethodPost, create, nil, string(forge), "endpoints")
+}
+
+// UpdateEndpoint updates an endpoint. Garm rejects changes to its URLs with
+// a bad request error while credentials use the endpoint.
+func (c *Client) UpdateEndpoint(ctx context.Context, forge params.EndpointType, name string, update UpdateEndpointParams) error {
+	return c.do(ctx, http.MethodPut, update, nil, string(forge), "endpoints", name)
+}
+
+func (c *Client) DeleteEndpoint(ctx context.Context, forge params.EndpointType, name string) error {
+	return c.do(ctx, http.MethodDelete, nil, nil, string(forge), "endpoints", name)
+}
+
+// The requests for credentials are those of GitHub. Gitea takes the same
+// ones, apart from not having apps.
+
+func (c *Client) ListCredentials(ctx context.Context, forge params.EndpointType) ([]params.ForgeCredentials, error) {
 	var creds []params.ForgeCredentials
-	err := c.do(ctx, http.MethodGet, nil, &creds, "github", "credentials")
+	err := c.do(ctx, http.MethodGet, nil, &creds, string(forge), "credentials")
 	return creds, err
 }
 
-func (c *Client) CreateGithubCredentials(ctx context.Context, create params.CreateGithubCredentialsParams) error {
-	return c.do(ctx, http.MethodPost, create, nil, "github", "credentials")
+func (c *Client) CreateCredentials(ctx context.Context, forge params.EndpointType, create params.CreateGithubCredentialsParams) error {
+	return c.do(ctx, http.MethodPost, create, nil, string(forge), "credentials")
 }
 
-func (c *Client) UpdateGithubCredentials(ctx context.Context, id uint, update params.UpdateGithubCredentialsParams) error {
-	return c.do(ctx, http.MethodPut, update, nil, "github", "credentials", formatID(id))
+func (c *Client) UpdateCredentials(ctx context.Context, forge params.EndpointType, id uint, update params.UpdateGithubCredentialsParams) error {
+	return c.do(ctx, http.MethodPut, update, nil, string(forge), "credentials", formatID(id))
 }
 
-func (c *Client) DeleteGithubCredentials(ctx context.Context, id uint) error {
-	return c.do(ctx, http.MethodDelete, nil, nil, "github", "credentials", formatID(id))
+func (c *Client) DeleteCredentials(ctx context.Context, forge params.EndpointType, id uint) error {
+	return c.do(ctx, http.MethodDelete, nil, nil, string(forge), "credentials", formatID(id))
 }
 
 // ListTemplates lists the templates without their data, which GetTemplate

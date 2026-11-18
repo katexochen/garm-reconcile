@@ -90,12 +90,41 @@ github:
       credentials_name: main
 
   enterprises: {}
+
+gitea:
+  endpoints:
+    local:
+      api_base_url: https://gitea.example.com/api/v1
+      base_url: https://gitea.example.com
+  credentials:
+    main:
+      endpoint: local
+      pat:
+        oauth2_token: { _secret: /run/secrets/gitea-token }
+  repositories:
+    owner/name:
+      credentials_name: main
 ```
+
+`github` and `gitea` take the same sections. Gitea has no apps, enterprises and
+scale sets.
 
 Entities take `credentials_name`, `webhook_secret`, `pool_balancer_type`,
 `agent_mode`, `pools` and `scale_sets`. A webhook secret is generated when an
 entity is created without one. Pools take the fields of garm's request to
 create a pool, except for `runner_prefix` and `template_id`.
+
+### Endpoints
+
+An endpoint is an instance of a forge. Credentials name the endpoint they are
+for, which has to be declared, except for the `github.com` endpoint that garm
+ships. Endpoints take `description`, `api_base_url`, `base_url` and
+`ca_cert_bundle`, GitHub endpoints also `upload_base_url`, and Gitea endpoints
+`tools_metadata_url`.
+
+garm does not change the URLs of an endpoint that has credentials, and cannot
+unset `ca_cert_bundle` and `tools_metadata_url`. Removing these two from the
+desired state leaves them as they are.
 
 ### Pools
 
@@ -152,8 +181,8 @@ controller and to log in. Changing it afterwards is not supported.
 
 1. It creates and updates everything that is declared. On a new controller it
    creates the admin user first.
-2. With `-prune`, it deletes pools, scale sets, entities, templates and
-   credentials that are not declared.
+2. With `-prune`, it deletes pools, scale sets, entities, templates,
+   credentials and endpoints that are not declared.
 
 A pool or scale set that has runners cannot be deleted. garm-reconcile disables
 it, removes its idle runners and waits for the remaining ones to finish their jobs.
@@ -162,9 +191,6 @@ the second phase may take. When it expires, `apply` fails and the pools and
 scale sets stay disabled until the next run deletes them. Waiting cannot outlast the lifetime
 of garm's API tokens (`jwt_auth.time_to_live`) either. An interrupted `apply`
 continues where it left off when run again.
-
-Only resources of GitHub endpoints are managed. Entities of other forges are
-left alone.
 
 ## systemd
 
@@ -191,7 +217,6 @@ With this unit, the state file references the secrets as
 
 ## Not supported yet
 
-- Custom GitHub endpoints and Gitea
 - Installing webhooks
 
 ## Development

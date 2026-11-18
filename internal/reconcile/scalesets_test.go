@@ -44,10 +44,10 @@ func TestScaleSets(t *testing.T) {
 
 	changes := run{srv: srv, cfg: cfg}.ensure(t)
 	assertEqual(t, "changes", changes[4:], []string{
-		"create organization my-org",
+		"create github organization my-org",
 		"create pool my-org/coco",
 		"create scale set my-org/coco-set",
-		"create enterprise corp",
+		"create github enterprise corp",
 	})
 	srv.State(func(st *garmtest.State) {
 		set := st.ScaleSets[0]
@@ -128,7 +128,7 @@ func TestPruneScaleSets(t *testing.T) {
 	assertEqual(t, "changes", changes, []string{
 		"delete pool my-org/coco",
 		"delete scale set my-org/coco-set",
-		"delete organization my-org",
+		"delete github organization my-org",
 	})
 	assertEqual(t, "progress", progress, []string{"waiting for the runners of my-org/coco-set"})
 	srv.State(func(st *garmtest.State) {
@@ -267,7 +267,7 @@ func TestDryRunWithNewEntityAndScaleSet(t *testing.T) {
 		ScaleSets:       map[string]config.ScaleSet{"coco-set": scaleSet()},
 	}
 	changes := run{srv: srv, cfg: cfg, dryRun: true}.ensure(t)
-	assertEqual(t, "changes", changes, []string{"create organization new-org", "create scale set new-org/coco-set"})
+	assertEqual(t, "changes", changes, []string{"create github organization new-org", "create scale set new-org/coco-set"})
 }
 
 func TestEnsureRejectsAmbiguousScaleSets(t *testing.T) {

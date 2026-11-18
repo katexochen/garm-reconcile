@@ -20,7 +20,7 @@ const defaultRunnerGroup = "Default"
 // ensureScaleSets creates and updates the scale sets of an entity, which
 // are identified by their name. entityID is empty in a dry run that would
 // create the entity.
-func (r *Reconciler) ensureScaleSets(ctx context.Context, kind garm.EntityKind, entityName, entityID string, declared map[string]config.ScaleSet) error {
+func (r *Reconciler) ensureScaleSets(ctx context.Context, f *forge, kind garm.EntityKind, entityName, entityID string, declared map[string]config.ScaleSet) error {
 	var existing []params.ScaleSet
 	if entityID != "" {
 		var err error
@@ -34,7 +34,7 @@ func (r *Reconciler) ensureScaleSets(ctx context.Context, kind garm.EntityKind, 
 		want := declared[setName].CreateScaleSetParams
 		want.Name = setName
 		name := entityName + "/" + setName
-		id, err := r.templateID(declared[setName].Template, want.OSType)
+		id, err := f.templateID(declared[setName].Template, want.OSType)
 		if err != nil {
 			return fmt.Errorf("%s %s: %w", KindScaleSet, name, err)
 		}
@@ -162,17 +162,22 @@ func scaleSetUpdate(want params.CreateScaleSetParams, fields []string) params.Up
 }
 
 // staleScaleSets returns the scale sets that are not declared.
-func (r *Reconciler) staleScaleSets(ctx context.Context) ([]runnerSet, error) {
+func (r *Reconciler) staleScaleSets(ctx context.Context, f *forge) ([]runnerSet, error) {
+	// Garm only has scale sets on GitHub, and answers with an error when
+	// asked for those of entities on other forges.
+	if f.typ != params.GithubEndpointType {
+		return nil, nil
+	}
 	var stale []runnerSet
 	for _, kind := range entityKinds {
-		entities, err := r.githubEntities(ctx, kind)
+		entities, err := r.forgeEntities(ctx, f, kind)
 		if err != nil {
 			return nil, err
 		}
 		for _, entity := range entities {
 			// Without a declaration, all scale sets of the entity are
 			// stale.
-			want, _ := r.declaration(kind, entity)
+			want, _ := f.declaration(kind, entity)
 			sets, err := r.client.ListEntityScaleSets(ctx, kind, entity.ID)
 			if err != nil {
 				return nil, fmt.Errorf("listing the scale sets of %s %s: %w", kind, entity.FullName(), err)

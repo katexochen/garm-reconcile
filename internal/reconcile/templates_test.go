@@ -42,10 +42,10 @@ func TestTemplates(t *testing.T) {
 	assertEqual(t, "changes", changes[2:], []string{
 		"create github credentials main",
 		"create github template nixos",
-		"create repository owner/repo",
-		"create organization my-org",
+		"create github repository owner/repo",
+		"create github organization my-org",
 		"create pool my-org/coco",
-		"create enterprise corp",
+		"create github enterprise corp",
 	})
 	srv.State(func(st *garmtest.State) {
 		template := findTemplate(t, st, "nixos")
@@ -78,7 +78,7 @@ func TestTemplates(t *testing.T) {
 	assertEqual(t, "changes to ensure", r.ensure(t), []string{"update pool my-org/coco (template_id)"})
 	assertEqual(t, "changes to prune", r.prune(t), []string{"delete github template nixos"})
 	srv.State(func(st *garmtest.State) {
-		assertEqual(t, "templates", len(st.Templates), 2)
+		assertEqual(t, "templates", len(st.Templates), 3)
 		assertEqual(t, "template of the pool", st.Pools[0].TemplateName, "github_linux")
 	})
 }
@@ -169,20 +169,5 @@ func TestTemplateErrors(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "the OS type cannot be changed from linux to windows") {
 			t.Errorf("Ensure() = %v, want it to reject the changed OS type", err)
 		}
-	})
-}
-
-func TestPruneLeavesTemplatesOfOtherForges(t *testing.T) {
-	cfg := desiredState()
-	srv := initialized(t, cfg)
-	srv.State(func(st *garmtest.State) {
-		st.Templates = append(st.Templates, &params.Template{
-			ID: 100, Name: "gitea", OSType: "linux", ForgeType: params.GiteaEndpointType, Owner: "admin",
-		})
-	})
-
-	assertEqual(t, "changes", run{srv: srv, cfg: cfg}.prune(t), nil)
-	srv.State(func(st *garmtest.State) {
-		assertEqual(t, "templates", len(st.Templates), 3)
 	})
 }

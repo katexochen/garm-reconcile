@@ -24,7 +24,7 @@ func isPool(pool params.Pool, prefix string, want params.CreatePoolParams) bool 
 
 // ensurePools creates and updates the pools of an entity. entityID is empty
 // in a dry run that would create the entity.
-func (r *Reconciler) ensurePools(ctx context.Context, kind garm.EntityKind, entityName, entityID string, declared map[string]config.Pool) error {
+func (r *Reconciler) ensurePools(ctx context.Context, f *forge, kind garm.EntityKind, entityName, entityID string, declared map[string]config.Pool) error {
 	var existing []params.Pool
 	if entityID != "" {
 		var err error
@@ -38,7 +38,7 @@ func (r *Reconciler) ensurePools(ctx context.Context, kind garm.EntityKind, enti
 		want := declared[prefix].CreatePoolParams
 		want.Prefix = prefix
 		name := entityName + "/" + prefix
-		id, err := r.templateID(declared[prefix].Template, want.OSType)
+		id, err := f.templateID(declared[prefix].Template, want.OSType)
 		if err != nil {
 			return fmt.Errorf("%s %s: %w", KindPool, name, err)
 		}
@@ -174,16 +174,16 @@ func extraSpecs(specs json.RawMessage) json.RawMessage {
 }
 
 // stalePools returns the pools that are not declared.
-func (r *Reconciler) stalePools(ctx context.Context) ([]runnerSet, error) {
+func (r *Reconciler) stalePools(ctx context.Context, f *forge) ([]runnerSet, error) {
 	var stale []runnerSet
 	for _, kind := range entityKinds {
-		entities, err := r.githubEntities(ctx, kind)
+		entities, err := r.forgeEntities(ctx, f, kind)
 		if err != nil {
 			return nil, err
 		}
 		for _, entity := range entities {
 			// Without a declaration, all pools of the entity are stale.
-			want, _ := r.declaration(kind, entity)
+			want, _ := f.declaration(kind, entity)
 			pools, err := r.client.ListEntityPools(ctx, kind, entity.ID)
 			if err != nil {
 				return nil, fmt.Errorf("listing the pools of %s %s: %w", kind, entity.FullName(), err)

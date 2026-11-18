@@ -157,7 +157,7 @@ func TestPlanAndApply(t *testing.T) {
 	want := `create admin user admin
 update controller (agent_url, callback_url, metadata_url)
 create github credentials main
-create organization my-org
+create github organization my-org
 create pool my-org/coco
 `
 	if stdout != want {

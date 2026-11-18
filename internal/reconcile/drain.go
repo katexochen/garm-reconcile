@@ -24,15 +24,18 @@ type runnerSet struct {
 }
 
 func (r *Reconciler) pruneRunners(ctx context.Context) error {
-	stale, err := r.stalePools(ctx)
-	if err != nil {
-		return err
+	var stale []runnerSet
+	for _, f := range r.forges {
+		pools, err := r.stalePools(ctx, f)
+		if err != nil {
+			return err
+		}
+		scaleSets, err := r.staleScaleSets(ctx, f)
+		if err != nil {
+			return err
+		}
+		stale = append(append(stale, pools...), scaleSets...)
 	}
-	scaleSets, err := r.staleScaleSets(ctx)
-	if err != nil {
-		return err
-	}
-	stale = append(stale, scaleSets...)
 
 	for _, set := range stale {
 		r.opts.Report(Change{Action: Delete, Kind: set.kind, Name: set.name})
@@ -53,6 +56,7 @@ func (r *Reconciler) pruneRunners(ctx context.Context) error {
 
 	var reported string
 	for {
+		var err error
 		stale, err = r.deleteDrained(ctx, stale)
 		if err != nil || len(stale) == 0 {
 			return err

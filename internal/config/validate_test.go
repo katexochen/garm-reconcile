@@ -225,6 +225,60 @@ func TestValidate(t *testing.T) {
 			change:  withScaleSet(func(s *ScaleSet) { s.Image = "" }),
 			wantErr: "github.organizations.my-org.scale_sets.coco-set: missing image",
 		},
+		"credentials for undeclared endpoint": {
+			change:  withCredentials(Credentials{Endpoint: "ghes", PAT: &PAT{OAuth2Token: "t"}}),
+			wantErr: `github.credentials.main.endpoint: endpoint "ghes" is not declared`,
+		},
+		"GitHub endpoint without upload URL": {
+			change: func(c *Config) {
+				c.GitHub.Endpoints = map[string]Endpoint{"ghes": {APIBaseURL: "https://ghes/api/v3", BaseURL: "https://ghes"}}
+			},
+			wantErr: "github.endpoints.ghes.upload_base_url: must be set",
+		},
+		"GitHub endpoint with tools metadata URL": {
+			change: func(c *Config) {
+				c.GitHub.Endpoints = map[string]Endpoint{"ghes": {
+					APIBaseURL: "https://ghes/api/v3", BaseURL: "https://ghes", UploadBaseURL: "https://ghes/up",
+					ToolsMetadataURL: "https://ghes/tools",
+				}}
+			},
+			wantErr: "github.endpoints.ghes.tools_metadata_url: only Gitea endpoints have",
+		},
+		"Gitea endpoint with upload URL": {
+			change: func(c *Config) {
+				c.Gitea.Endpoints = map[string]Endpoint{"local": {
+					APIBaseURL: "http://gitea/api/v1", BaseURL: "http://gitea", UploadBaseURL: "http://gitea/up",
+				}}
+			},
+			wantErr: "gitea.endpoints.local.upload_base_url: Gitea endpoints have no upload URL",
+		},
+		"Gitea endpoint without URL": {
+			change:  func(c *Config) { c.Gitea.Endpoints = map[string]Endpoint{"local": {BaseURL: "http://gitea"}} },
+			wantErr: "gitea.endpoints.local.api_base_url: must be set",
+		},
+		"Gitea credentials on the GitHub endpoint": {
+			change: func(c *Config) {
+				c.Gitea.Credentials = map[string]Credentials{"main": {Endpoint: "github.com", PAT: &PAT{OAuth2Token: "t"}}}
+			},
+			wantErr: `gitea.credentials.main.endpoint: endpoint "github.com" is not declared`,
+		},
+		"Gitea app": {
+			change: func(c *Config) {
+				c.Gitea.Endpoints = map[string]Endpoint{"local": {APIBaseURL: "http://gitea/api/v1", BaseURL: "http://gitea"}}
+				c.Gitea.Credentials = map[string]Credentials{"main": {Endpoint: "local", App: &App{AppID: 1, InstallationID: 2, PrivateKey: "k"}}}
+			},
+			wantErr: "gitea.credentials.main.app: Gitea has no apps",
+		},
+		"Gitea enterprise": {
+			change:  func(c *Config) { c.Gitea.Enterprises = map[string]Entity{"corp": {}} },
+			wantErr: "gitea.enterprises: Gitea has no enterprises",
+		},
+		"Gitea scale set": {
+			change: func(c *Config) {
+				c.Gitea.Organizations = map[string]Entity{"org": {ScaleSets: map[string]ScaleSet{"set": {}}}}
+			},
+			wantErr: "gitea.organizations.org.scale_sets: Gitea has no scale sets",
+		},
 		"pool rejected by garm": {
 			change:  withPool("coco", func(p *Pool) { p.MinIdleRunners = 3 }),
 			wantErr: "github.organizations.my-org.pools.coco: min_idle_runners cannot be larger than max_runners",

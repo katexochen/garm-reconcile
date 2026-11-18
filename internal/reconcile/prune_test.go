@@ -43,14 +43,6 @@ func TestPruneDeletesUndeclaredResources(t *testing.T) {
 	}
 	cfg.GitHub.Organizations["my-org"].Pools["old"] = pool()
 	srv := initialized(t, cfg)
-	// Entities of other forges are not managed.
-	srv.State(func(st *garmtest.State) {
-		st.Entities[garm.Repository] = append(st.Entities[garm.Repository], &garmtest.Entity{Entity: garm.Entity{
-			ID: "gitea-repo", Owner: "owner", Name: "gitea-repo",
-			Endpoint: params.ForgeEndpoint{Name: "gitea", EndpointType: params.GiteaEndpointType},
-		}})
-	})
-
 	delete(cfg.GitHub.Credentials, "legacy")
 	delete(cfg.GitHub.Organizations, "legacy-org")
 	delete(cfg.GitHub.Organizations["my-org"].Pools, "old")
@@ -60,15 +52,15 @@ func TestPruneDeletesUndeclaredResources(t *testing.T) {
 	assertEqual(t, "changes", changes, []string{
 		"delete pool legacy-org/old",
 		"delete pool my-org/old",
-		"delete organization legacy-org",
-		"delete enterprise corp",
+		"delete github organization legacy-org",
+		"delete github enterprise corp",
 		"delete github credentials legacy",
 	})
 
 	srv.State(func(st *garmtest.State) {
 		assertEqual(t, "credentials", len(st.Credentials), 1)
 		assertEqual(t, "credentials name", st.Credentials[0].Name, "main")
-		assertEqual(t, "repositories", len(st.Entities[garm.Repository]), 2)
+		assertEqual(t, "repositories", len(st.Entities[garm.Repository]), 1)
 		assertEqual(t, "organizations", len(st.Entities[garm.Organization]), 1)
 		assertEqual(t, "organization", st.Entities[garm.Organization][0].Name, "my-org")
 		assertEqual(t, "enterprises", len(st.Entities[garm.Enterprise]), 0)

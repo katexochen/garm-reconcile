@@ -155,10 +155,10 @@ func TestEnsureCreatesDeclaredResources(t *testing.T) {
 		"create admin user admin",
 		"update controller (agent_url, callback_url, metadata_url)",
 		"create github credentials main",
-		"create repository owner/repo",
-		"create organization my-org",
+		"create github repository owner/repo",
+		"create github organization my-org",
 		"create pool my-org/coco",
-		"create enterprise corp",
+		"create github enterprise corp",
 	})
 
 	srv.State(func(st *garmtest.State) {
@@ -237,7 +237,7 @@ func TestEnsureUpdates(t *testing.T) {
 		"update controller (webhook_url)",
 		"update github credentials main (description)",
 		"create github credentials other",
-		"update repository owner/repo (credentials_name, pool_balancer_type, agent_mode)",
+		"update github repository owner/repo (credentials_name, pool_balancer_type, agent_mode)",
 		"update pool my-org/coco (enabled, max_runners, tags)",
 	})
 
@@ -383,12 +383,12 @@ func TestDryRun(t *testing.T) {
 	r := run{srv: srv, cfg: cfg, dryRun: true}
 	assertEqual(t, "changes to ensure", r.ensure(t), []string{
 		"update github credentials main (description)",
-		"update repository owner/repo (agent_mode)",
+		"update github repository owner/repo (agent_mode)",
 		"update pool my-org/coco (max_runners)",
-		"create organization new-org",
+		"create github organization new-org",
 		"create pool new-org/coco",
 	})
-	assertEqual(t, "changes to prune", r.prune(t), []string{"delete enterprise corp"})
+	assertEqual(t, "changes to prune", r.prune(t), []string{"delete github enterprise corp"})
 	assertEqual(t, "mutations", takeMutations(srv), nil)
 }
 
@@ -444,7 +444,7 @@ func TestEnsureMatchesEntitiesByEndpoint(t *testing.T) {
 	})
 
 	changes := run{srv: srv, cfg: cfg}.ensure(t)
-	assertEqual(t, "changes", changes, []string{"create organization my-org", "create pool my-org/coco"})
+	assertEqual(t, "changes", changes, []string{"create github organization my-org", "create pool my-org/coco"})
 }
 
 func jsonNames(t reflect.Type) []string {

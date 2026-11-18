@@ -29,6 +29,7 @@ type State struct {
 	// Admin is nil until the controller is initialized.
 	Admin       *params.NewUserParams
 	Controller  params.ControllerInfo
+	Endpoints   []*params.ForgeEndpoint
 	Credentials []*Credentials
 	Templates   []*params.Template
 	Entities    map[garm.EntityKind][]*Entity
@@ -79,6 +80,14 @@ func NewServer(t *testing.T) *Server {
 	}, {
 		ID: s.state.newID(), Name: "github_windows", OSType: commonparams.Windows,
 		ForgeType: params.GithubEndpointType, Owner: params.SystemUser, Data: []byte("#ps1"),
+	}, {
+		ID: s.state.newID(), Name: "gitea_linux", OSType: commonparams.Linux,
+		ForgeType: params.GiteaEndpointType, Owner: params.SystemUser, Data: []byte("#!/bin/sh"),
+	}}
+	// It also has an endpoint for github.com.
+	s.state.Endpoints = []*params.ForgeEndpoint{{
+		Name: "github.com", EndpointType: params.GithubEndpointType,
+		APIBaseURL: "https://api.github.com", BaseURL: "https://github.com", UploadBaseURL: "https://uploads.github.com",
 	}}
 
 	mux := http.NewServeMux()
@@ -87,10 +96,17 @@ func NewServer(t *testing.T) *Server {
 	mux.Handle("GET /api/v1/controller", s.route(authenticated, (*State).controllerInfo))
 	mux.Handle("PUT /api/v1/controller", s.route(authenticated, (*State).updateController))
 	mux.Handle("GET /api/v1/controller-info", s.route(configured, (*State).controllerInfo))
-	mux.Handle("GET /api/v1/github/credentials", s.route(configured, (*State).listCredentials))
-	mux.Handle("POST /api/v1/github/credentials", s.route(configured, (*State).createCredentials))
-	mux.Handle("PUT /api/v1/github/credentials/{id}", s.route(configured, (*State).updateCredentials))
-	mux.Handle("DELETE /api/v1/github/credentials/{id}", s.route(configured, (*State).deleteCredentials))
+	for _, forge := range []params.EndpointType{params.GithubEndpointType, params.GiteaEndpointType} {
+		prefix := "/api/v1/" + string(forge)
+		mux.Handle("GET "+prefix+"/endpoints", s.route(configured, listEndpoints(forge)))
+		mux.Handle("POST "+prefix+"/endpoints", s.route(configured, createEndpoint(forge)))
+		mux.Handle("PUT "+prefix+"/endpoints/{name}", s.route(configured, updateEndpoint(forge)))
+		mux.Handle("DELETE "+prefix+"/endpoints/{name}", s.route(configured, deleteEndpoint(forge)))
+		mux.Handle("GET "+prefix+"/credentials", s.route(configured, listCredentials(forge)))
+		mux.Handle("POST "+prefix+"/credentials", s.route(configured, createCredentials(forge)))
+		mux.Handle("PUT "+prefix+"/credentials/{id}", s.route(configured, updateCredentials(forge)))
+		mux.Handle("DELETE "+prefix+"/credentials/{id}", s.route(configured, deleteCredentials(forge)))
+	}
 	mux.Handle("GET /api/v1/templates", s.route(configured, (*State).listTemplates))
 	mux.Handle("POST /api/v1/templates", s.route(configured, (*State).createTemplate))
 	mux.Handle("GET /api/v1/templates/{id}", s.route(configured, (*State).getTemplate))
@@ -280,110 +296,208 @@ func (st *State) updateController(r *http.Request) (any, error) {
 	return st.Controller, nil
 }
 
-func (st *State) listCredentials(_ *http.Request) (any, error) {
-	creds := []params.ForgeCredentials{}
-	for _, c := range st.Credentials {
-		creds = append(creds, c.ForgeCredentials)
+func (st *State) findEndpoint(forge params.EndpointType, name string) *params.ForgeEndpoint {
+	for _, e := range st.Endpoints {
+		if e.EndpointType == forge && strings.EqualFold(e.Name, name) {
+			return e
+		}
 	}
-	return creds, nil
+	return nil
 }
 
-func (st *State) findCredentials(name string) *Credentials {
+func listEndpoints(forge params.EndpointType) handler {
+	return func(st *State, _ *http.Request) (any, error) {
+		endpoints := []params.ForgeEndpoint{}
+		for _, e := range st.Endpoints {
+			if e.EndpointType == forge {
+				endpoints = append(endpoints, *e)
+			}
+		}
+		return endpoints, nil
+	}
+}
+
+func createEndpoint(forge params.EndpointType) handler {
+	return func(st *State, r *http.Request) (any, error) {
+		create, err := decode[garm.CreateEndpointParams](r)
+		if err != nil {
+			return nil, err
+		}
+		if create.Name == "" || create.APIBaseURL == "" || create.BaseURL == "" {
+			return nil, badRequest("missing name or URL")
+		}
+		if forge == params.GithubEndpointType && create.UploadBaseURL == "" {
+			return nil, badRequest("missing upload_base_url")
+		}
+		if st.findEndpoint(forge, create.Name) != nil {
+			return nil, conflict("%s endpoint already exists", forge)
+		}
+		endpoint := &params.ForgeEndpoint{
+			Name: create.Name, Description: create.Description, EndpointType: forge,
+			APIBaseURL: create.APIBaseURL, BaseURL: create.BaseURL, UploadBaseURL: create.UploadBaseURL,
+			CACertBundle: create.CACertBundle, ToolsMetadataURL: create.ToolsMetadataURL,
+		}
+		st.Endpoints = append(st.Endpoints, endpoint)
+		return *endpoint, nil
+	}
+}
+
+func (st *State) endpointInUse(endpoint *params.ForgeEndpoint) bool {
+	return slices.ContainsFunc(st.Credentials, func(c *Credentials) bool {
+		return c.ForgeType == endpoint.EndpointType && c.Endpoint.Name == endpoint.Name
+	})
+}
+
+func updateEndpoint(forge params.EndpointType) handler {
+	return func(st *State, r *http.Request) (any, error) {
+		endpoint := st.findEndpoint(forge, r.PathValue("name"))
+		if endpoint == nil {
+			return nil, notFound()
+		}
+		update, err := decode[garm.UpdateEndpointParams](r)
+		if err != nil {
+			return nil, err
+		}
+		changesURL := (update.APIBaseURL != nil && *update.APIBaseURL != endpoint.APIBaseURL) ||
+			(update.BaseURL != nil && *update.BaseURL != endpoint.BaseURL)
+		if changesURL && st.endpointInUse(endpoint) {
+			return nil, badRequest("cannot update endpoint URLs with existing credentials")
+		}
+		setPointer(&endpoint.Description, update.Description)
+		setPointer(&endpoint.APIBaseURL, update.APIBaseURL)
+		setPointer(&endpoint.BaseURL, update.BaseURL)
+		setPointer(&endpoint.UploadBaseURL, update.UploadBaseURL)
+		setString(&endpoint.ToolsMetadataURL, update.ToolsMetadataURL)
+		if update.CACertBundle != nil {
+			endpoint.CACertBundle = update.CACertBundle
+		}
+		return *endpoint, nil
+	}
+}
+
+func deleteEndpoint(forge params.EndpointType) handler {
+	return func(st *State, r *http.Request) (any, error) {
+		endpoint := st.findEndpoint(forge, r.PathValue("name"))
+		if endpoint == nil {
+			return nil, nil
+		}
+		if st.endpointInUse(endpoint) {
+			return nil, badRequest("cannot delete endpoint with associated entities")
+		}
+		st.Endpoints = slices.DeleteFunc(st.Endpoints, func(e *params.ForgeEndpoint) bool { return e == endpoint })
+		return nil, nil
+	}
+}
+
+func listCredentials(forge params.EndpointType) handler {
+	return func(st *State, _ *http.Request) (any, error) {
+		creds := []params.ForgeCredentials{}
+		for _, c := range st.Credentials {
+			if c.ForgeType == forge {
+				creds = append(creds, c.ForgeCredentials)
+			}
+		}
+		return creds, nil
+	}
+}
+
+func (st *State) findCredentials(forge params.EndpointType, name string) *Credentials {
 	for _, c := range st.Credentials {
-		if strings.EqualFold(c.Name, name) {
+		if c.ForgeType == forge && strings.EqualFold(c.Name, name) {
 			return c
 		}
 	}
 	return nil
 }
 
-func (st *State) createCredentials(r *http.Request) (any, error) {
-	create, err := decode[params.CreateGithubCredentialsParams](r)
-	if err != nil {
-		return nil, err
+func createCredentials(forge params.EndpointType) handler {
+	return func(st *State, r *http.Request) (any, error) {
+		create, err := decode[params.CreateGithubCredentialsParams](r)
+		if err != nil {
+			return nil, err
+		}
+		if err := create.Validate(); err != nil {
+			return nil, badRequest("%v", err)
+		}
+		if forge == params.GiteaEndpointType && create.AuthType != params.ForgeAuthTypePAT {
+			return nil, badRequest("invalid auth_type: %s", create.AuthType)
+		}
+		endpoint := st.findEndpoint(forge, create.Endpoint)
+		if endpoint == nil {
+			return nil, notFound()
+		}
+		if st.findCredentials(forge, create.Name) != nil {
+			return nil, conflict("%s credentials already exists", forge)
+		}
+		creds := &Credentials{
+			ForgeCredentials: params.ForgeCredentials{
+				ID:          st.newID(),
+				Name:        create.Name,
+				Description: create.Description,
+				AuthType:    create.AuthType,
+				ForgeType:   forge,
+				Endpoint:    *endpoint,
+			},
+			PAT: create.PAT,
+			App: create.App,
+		}
+		st.Credentials = append(st.Credentials, creds)
+		return creds.ForgeCredentials, nil
 	}
-	if err := create.Validate(); err != nil {
-		return nil, badRequest("%v", err)
-	}
-	if st.findCredentials(create.Name) != nil {
-		return nil, conflict("github credentials already exists")
-	}
-	creds := &Credentials{
-		ForgeCredentials: params.ForgeCredentials{
-			ID:          st.newID(),
-			Name:        create.Name,
-			Description: create.Description,
-			AuthType:    create.AuthType,
-			ForgeType:   params.GithubEndpointType,
-			Endpoint:    params.ForgeEndpoint{Name: create.Endpoint, EndpointType: params.GithubEndpointType},
-		},
-		PAT: create.PAT,
-		App: create.App,
-	}
-	st.Credentials = append(st.Credentials, creds)
-	return creds.ForgeCredentials, nil
 }
 
-func (st *State) credentialsByID(r *http.Request) (*Credentials, error) {
-	id, err := strconv.ParseUint(r.PathValue("id"), 10, 64)
-	if err != nil {
-		return nil, badRequest("invalid credentials ID")
-	}
+func (st *State) credentialsByID(forge params.EndpointType, r *http.Request) (*Credentials, error) {
 	for _, c := range st.Credentials {
-		if uint64(c.ID) == id {
+		if c.ForgeType == forge && formatID(c.ID) == r.PathValue("id") {
 			return c, nil
 		}
 	}
 	return nil, notFound()
 }
 
-func (st *State) updateCredentials(r *http.Request) (any, error) {
-	creds, err := st.credentialsByID(r)
-	if err != nil {
-		return nil, err
+func updateCredentials(forge params.EndpointType) handler {
+	return func(st *State, r *http.Request) (any, error) {
+		creds, err := st.credentialsByID(forge, r)
+		if err != nil {
+			return nil, err
+		}
+		update, err := decode[params.UpdateGithubCredentialsParams](r)
+		if err != nil {
+			return nil, err
+		}
+		if err := update.Validate(); err != nil {
+			return nil, badRequest("%v", err)
+		}
+		if update.PAT != nil && creds.AuthType != params.ForgeAuthTypePAT {
+			return nil, badRequest("cannot update PAT credentials for app")
+		}
+		if update.App != nil && creds.AuthType != params.ForgeAuthTypeApp {
+			return nil, badRequest("cannot update app credentials for PAT")
+		}
+		setPointer(&creds.Name, update.Name)
+		setPointer(&creds.Description, update.Description)
+		setPointer(&creds.PAT, update.PAT)
+		setPointer(&creds.App, update.App)
+		return creds.ForgeCredentials, nil
 	}
-	update, err := decode[params.UpdateGithubCredentialsParams](r)
-	if err != nil {
-		return nil, err
-	}
-	if err := update.Validate(); err != nil {
-		return nil, badRequest("%v", err)
-	}
-	if update.PAT != nil && creds.AuthType != params.ForgeAuthTypePAT {
-		return nil, badRequest("cannot update PAT credentials for app")
-	}
-	if update.App != nil && creds.AuthType != params.ForgeAuthTypeApp {
-		return nil, badRequest("cannot update app credentials for PAT")
-	}
-	if update.Name != nil {
-		creds.Name = *update.Name
-	}
-	if update.Description != nil {
-		creds.Description = *update.Description
-	}
-	if update.PAT != nil {
-		creds.PAT = *update.PAT
-	}
-	if update.App != nil {
-		creds.App = *update.App
-	}
-	return creds.ForgeCredentials, nil
 }
 
-func (st *State) deleteCredentials(r *http.Request) (any, error) {
-	creds, err := st.credentialsByID(r)
-	if err != nil {
-		return nil, err
-	}
-	for _, entities := range st.Entities {
-		for _, e := range entities {
-			if strings.EqualFold(e.CredentialsName, creds.Name) {
-				return nil, badRequest("cannot delete credentials with entities")
+func deleteCredentials(forge params.EndpointType) handler {
+	return func(st *State, r *http.Request) (any, error) {
+		creds, err := st.credentialsByID(forge, r)
+		if err != nil {
+			return nil, err
+		}
+		for _, entities := range st.Entities {
+			for _, e := range entities {
+				if e.Endpoint.EndpointType == forge && strings.EqualFold(e.CredentialsName, creds.Name) {
+					return nil, badRequest("cannot delete credentials with entities")
+				}
 			}
 		}
+		st.Credentials = slices.DeleteFunc(st.Credentials, func(c *Credentials) bool { return c == creds })
+		return nil, nil
 	}
-	st.Credentials = slices.DeleteFunc(st.Credentials, func(c *Credentials) bool { return c == creds })
-	return nil, nil
 }
 
 // listTemplates leaves out the data of the templates, like garm.
@@ -518,7 +632,14 @@ func createEntity(kind garm.EntityKind) handler {
 		if create.WebhookSecret == "" {
 			return nil, badRequest("missing secret")
 		}
-		creds := st.findCredentials(create.CredentialsName)
+		forge := create.ForgeType
+		if forge == params.AutoEndpointType {
+			forge = params.GithubEndpointType
+		}
+		if forge == params.GiteaEndpointType && kind == garm.Enterprise {
+			return nil, badRequest("invalid forge type")
+		}
+		creds := st.findCredentials(forge, create.CredentialsName)
 		if creds == nil {
 			return nil, badRequest("credentials %s not defined", create.CredentialsName)
 		}
@@ -564,7 +685,7 @@ func updateEntity(kind garm.EntityKind) handler {
 			return nil, err
 		}
 		if update.CredentialsName != "" {
-			creds := st.findCredentials(update.CredentialsName)
+			creds := st.findCredentials(entity.Endpoint.EndpointType, update.CredentialsName)
 			if creds == nil {
 				return nil, badRequest("credentials %s not defined", update.CredentialsName)
 			}
@@ -673,9 +794,12 @@ func createEntityPool(kind garm.EntityKind) handler {
 		}
 		// Without a template, garm picks the one it ships for the OS.
 		for _, t := range st.Templates {
-			if create.TemplateID == nil && t.Owner == params.SystemUser && t.OSType == create.OSType {
+			if create.TemplateID == nil && t.Owner == params.SystemUser && t.OSType == create.OSType && t.ForgeType == entity.Endpoint.EndpointType {
 				create.TemplateID = &t.ID
 			}
+		}
+		if create.TemplateID == nil {
+			return nil, badRequest("no template ID supplied and no default template can be found")
 		}
 		template := st.templateByID(formatID(*create.TemplateID))
 		if template == nil {
@@ -861,6 +985,9 @@ func createEntityScaleSet(kind garm.EntityKind) handler {
 		if err != nil {
 			return nil, err
 		}
+		if entity.Endpoint.EndpointType != params.GithubEndpointType {
+			return nil, badRequest("scale sets are only supported for github entities")
+		}
 		if err := create.Validate(); err != nil {
 			return nil, badRequest("%v", err)
 		}
@@ -898,9 +1025,12 @@ func createEntityScaleSet(kind garm.EntityKind) handler {
 			set.GitHubRunnerGroup = "Default"
 		}
 		for _, t := range st.Templates {
-			if create.TemplateID == nil && t.Owner == params.SystemUser && t.OSType == create.OSType {
+			if create.TemplateID == nil && t.Owner == params.SystemUser && t.OSType == create.OSType && t.ForgeType == entity.Endpoint.EndpointType {
 				create.TemplateID = &t.ID
 			}
+		}
+		if create.TemplateID == nil {
+			return nil, badRequest("no template ID supplied and no default template can be found")
 		}
 		template := st.templateByID(formatID(*create.TemplateID))
 		if template == nil {

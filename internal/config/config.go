@@ -17,7 +17,12 @@ type Config struct {
 	Admin      Admin      `json:"admin"`
 	Controller Controller `json:"controller"`
 	GitHub     Forge      `json:"github"`
+	Gitea      Forge      `json:"gitea"`
 }
+
+// DefaultGitHubEndpoint is the endpoint garm ships, which can be used
+// without being declared.
+const DefaultGitHubEndpoint = "github.com"
 
 // Admin is the user garm-reconcile authenticates as. It is created when the
 // controller is not initialized yet.
@@ -39,12 +44,28 @@ type Controller struct {
 
 // Forge is everything declared for one forge type.
 type Forge struct {
+	Endpoints   map[string]Endpoint    `json:"endpoints,omitempty"`
 	Credentials map[string]Credentials `json:"credentials,omitempty"`
 	Templates   map[string]Template    `json:"templates,omitempty"`
 	// Repositories are keyed by "owner/name".
 	Repositories  map[string]Entity `json:"repositories,omitempty"`
 	Organizations map[string]Entity `json:"organizations,omitempty"`
 	Enterprises   map[string]Entity `json:"enterprises,omitempty"`
+}
+
+// Endpoint is an instance of a forge.
+type Endpoint struct {
+	Description string `json:"description,omitempty"`
+	APIBaseURL  string `json:"api_base_url"`
+	BaseURL     string `json:"base_url"`
+	// UploadBaseURL is required for GitHub and not used by Gitea.
+	UploadBaseURL string `json:"upload_base_url,omitempty"`
+	// CACertBundle holds PEM encoded certificates. It is left untouched
+	// in garm when empty.
+	CACertBundle string `json:"ca_cert_bundle,omitempty"`
+	// ToolsMetadataURL is where garm finds the runner releases of a Gitea
+	// endpoint. It is left untouched in garm when empty.
+	ToolsMetadataURL string `json:"tools_metadata_url,omitempty"`
 }
 
 // Credentials authenticate garm against a forge endpoint, either with a

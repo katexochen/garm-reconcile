@@ -55,18 +55,32 @@ func (c Change) String() string {
 	return s
 }
 
-// Kind is the kind of resource a change affects. Entities use the name of
-// their garm.EntityKind.
+// Kind is the kind of resource a change affects. Kinds that exist per forge
+// are prefixed with it, like "github credentials".
 type Kind string
 
 const (
-	KindAdmin       Kind = "admin user"
-	KindController  Kind = "controller"
-	KindCredentials Kind = "github credentials"
-	KindTemplate    Kind = "github template"
-	KindPool        Kind = "pool"
-	KindScaleSet    Kind = "scale set"
+	KindAdmin      Kind = "admin user"
+	KindController Kind = "controller"
+	KindPool       Kind = "pool"
+	KindScaleSet   Kind = "scale set"
 )
+
+// forge is a type of forge together with what is declared for it.
+type forge struct {
+	typ params.EndpointType
+	cfg config.Forge
+
+	// Ensure records what pools and scale sets need to refer to
+	// templates: the IDs of the declared ones by name, and the templates
+	// garm ships.
+	templateIDs      map[string]uint
+	shippedTemplates []params.Template
+}
+
+func (f *forge) kind(resource string) Kind {
+	return Kind(string(f.typ) + " " + resource)
+}
 
 // Options configure a Reconciler.
 type Options struct {
@@ -87,13 +101,8 @@ type Options struct {
 type Reconciler struct {
 	client *garm.Client
 	cfg    *config.Config
+	forges []*forge
 	opts   Options
-
-	// Ensure records what pools and scale sets need to refer to
-	// templates: the IDs of the declared ones by name, and the templates
-	// garm ships.
-	templateIDs      map[string]uint
-	shippedTemplates []params.Template
 }
 
 // New returns a Reconciler that brings the controller behind client to the
@@ -108,7 +117,11 @@ func New(client *garm.Client, cfg *config.Config, opts Options) *Reconciler {
 	if opts.PollInterval == 0 {
 		opts.PollInterval = 5 * time.Second
 	}
-	return &Reconciler{client: client, cfg: cfg, opts: opts}
+	forges := []*forge{
+		{typ: params.GithubEndpointType, cfg: cfg.GitHub},
+		{typ: params.GiteaEndpointType, cfg: cfg.Gitea},
+	}
+	return &Reconciler{client: client, cfg: cfg, forges: forges, opts: opts}
 }
 
 // Ensure creates and updates resources until garm has everything that is
@@ -121,13 +134,21 @@ func (r *Reconciler) Ensure(ctx context.Context) error {
 	if err := r.ensureController(ctx); err != nil {
 		return err
 	}
-	if err := r.ensureCredentials(ctx); err != nil {
-		return err
+	for _, f := range r.forges {
+		if err := r.ensureEndpoints(ctx, f); err != nil {
+			return err
+		}
+		if err := r.ensureCredentials(ctx, f); err != nil {
+			return err
+		}
+		if err := r.ensureTemplates(ctx, f); err != nil {
+			return err
+		}
+		if err := r.ensureEntities(ctx, f); err != nil {
+			return err
+		}
 	}
-	if err := r.ensureTemplates(ctx); err != nil {
-		return err
-	}
-	return r.ensureEntities(ctx)
+	return nil
 }
 
 // Prune deletes the resources that are not declared. It must be called after
@@ -140,13 +161,21 @@ func (r *Reconciler) Prune(ctx context.Context) error {
 	if err := r.pruneRunners(ctx); err != nil {
 		return err
 	}
-	if err := r.pruneEntities(ctx); err != nil {
-		return err
+	for _, f := range r.forges {
+		if err := r.pruneEntities(ctx, f); err != nil {
+			return err
+		}
+		if err := r.pruneTemplates(ctx, f); err != nil {
+			return err
+		}
+		if err := r.pruneCredentials(ctx, f); err != nil {
+			return err
+		}
+		if err := r.pruneEndpoints(ctx, f); err != nil {
+			return err
+		}
 	}
-	if err := r.pruneTemplates(ctx); err != nil {
-		return err
-	}
-	return r.pruneCredentials(ctx)
+	return nil
 }
 
 // apply reports a change and carries it out, unless this is a dry run.

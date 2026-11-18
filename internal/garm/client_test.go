@@ -90,8 +90,8 @@ func TestInitialization(t *testing.T) {
 
 	// Everything but the controller settings is unavailable until the
 	// controller URLs are set.
-	if _, err := client.ListGithubCredentials(ctx); err == nil {
-		t.Error("ListGithubCredentials() succeeded without controller URLs")
+	if _, err := client.ListCredentials(ctx, params.GithubEndpointType); err == nil {
+		t.Error("ListCredentials() succeeded without controller URLs")
 	}
 	update := params.UpdateControllerParams{
 		MetadataURL: ptr("http://garm/api/v1/metadata"),
@@ -108,8 +108,8 @@ func TestInitialization(t *testing.T) {
 	if info.MetadataURL != *update.MetadataURL || info.CallbackURL != *update.CallbackURL || info.AgentURL != *update.AgentURL {
 		t.Errorf("ControllerInfo() = %+v, want the URLs of %+v", info, update)
 	}
-	if _, err := client.ListGithubCredentials(ctx); err != nil {
-		t.Errorf("ListGithubCredentials() with controller URLs: %v", err)
+	if _, err := client.ListCredentials(ctx, params.GithubEndpointType); err != nil {
+		t.Errorf("ListCredentials() with controller URLs: %v", err)
 	}
 }
 
@@ -123,22 +123,22 @@ func TestCredentials(t *testing.T) {
 		AuthType: params.ForgeAuthTypePAT,
 		PAT:      params.GithubPAT{OAuth2Token: "ghp_old"},
 	}
-	if err := client.CreateGithubCredentials(ctx, create); err != nil {
+	if err := client.CreateCredentials(ctx, params.GithubEndpointType, create); err != nil {
 		t.Fatal(err)
 	}
-	creds, err := client.ListGithubCredentials(ctx)
+	creds, err := client.ListCredentials(ctx, params.GithubEndpointType)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(creds) != 1 || creds[0].Name != "main" || creds[0].Endpoint.Name != "github.com" || creds[0].AuthType != params.ForgeAuthTypePAT {
-		t.Fatalf("ListGithubCredentials() = %+v, want the created credentials", creds)
+		t.Fatalf("ListCredentials() = %+v, want the created credentials", creds)
 	}
 
 	update := params.UpdateGithubCredentialsParams{
 		Description: ptr("rotated"),
 		PAT:         &params.GithubPAT{OAuth2Token: "ghp_new"},
 	}
-	if err := client.UpdateGithubCredentials(ctx, creds[0].ID, update); err != nil {
+	if err := client.UpdateCredentials(ctx, params.GithubEndpointType, creds[0].ID, update); err != nil {
 		t.Fatal(err)
 	}
 	srv.State(func(st *garmtest.State) {
@@ -147,7 +147,7 @@ func TestCredentials(t *testing.T) {
 		}
 	})
 
-	if err := client.DeleteGithubCredentials(ctx, creds[0].ID); err != nil {
+	if err := client.DeleteCredentials(ctx, params.GithubEndpointType, creds[0].ID); err != nil {
 		t.Fatal(err)
 	}
 	srv.State(func(st *garmtest.State) {
@@ -160,7 +160,7 @@ func TestCredentials(t *testing.T) {
 func TestEntitiesAndPools(t *testing.T) {
 	ctx := context.Background()
 	client, srv := configuredClient(t)
-	err := client.CreateGithubCredentials(ctx, params.CreateGithubCredentialsParams{
+	err := client.CreateCredentials(ctx, params.GithubEndpointType, params.CreateGithubCredentialsParams{
 		Name: "main", Endpoint: "github.com", AuthType: params.ForgeAuthTypePAT,
 		PAT: params.GithubPAT{OAuth2Token: "ghp_token"},
 	})
@@ -189,9 +189,9 @@ func TestEntitiesAndPools(t *testing.T) {
 			}
 			want := garm.Entity{
 				ID: created.ID, Owner: create.Owner, Name: create.Name, CredentialsName: "main",
-				Endpoint: params.ForgeEndpoint{Name: "github.com", EndpointType: params.GithubEndpointType},
 			}
-			if len(entities) != 1 || !reflect.DeepEqual(entities[0], want) {
+			want.Endpoint = entities[0].Endpoint
+			if len(entities) != 1 || !reflect.DeepEqual(entities[0], want) || want.Endpoint.Name != "github.com" {
 				t.Fatalf("ListEntities() = %+v, want [%+v]", entities, want)
 			}
 
@@ -319,8 +319,8 @@ func TestReadOnly(t *testing.T) {
 	if err := client.Login(ctx, admin.Username, admin.Password); err != nil {
 		t.Errorf("Login() with a read-only client: %v", err)
 	}
-	if _, err := client.ListGithubCredentials(ctx); err != nil {
-		t.Errorf("ListGithubCredentials() with a read-only client: %v", err)
+	if _, err := client.ListCredentials(ctx, params.GithubEndpointType); err != nil {
+		t.Errorf("ListCredentials() with a read-only client: %v", err)
 	}
 	err := client.UpdateController(ctx, params.UpdateControllerParams{WebhookURL: ptr("http://garm/webhooks")})
 	if err == nil || !strings.Contains(err.Error(), "refusing PUT controller with a read-only client") {
@@ -355,8 +355,9 @@ func TestTemplates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Garm ships two templates of its own.
-	if len(templates) != 3 || templates[2].Name != "nixos" || templates[2].Data != nil {
+	// Garm ships templates of its own.
+	last := templates[len(templates)-1]
+	if len(templates) != 4 || last.Name != "nixos" || last.Data != nil {
 		t.Fatalf("ListTemplates() = %+v, want the created template without data", templates)
 	}
 
@@ -383,7 +384,7 @@ func TestTemplates(t *testing.T) {
 func TestScaleSets(t *testing.T) {
 	ctx := context.Background()
 	client, srv := configuredClient(t)
-	err := client.CreateGithubCredentials(ctx, params.CreateGithubCredentialsParams{
+	err := client.CreateCredentials(ctx, params.GithubEndpointType, params.CreateGithubCredentialsParams{
 		Name: "main", Endpoint: "github.com", AuthType: params.ForgeAuthTypePAT,
 		PAT: params.GithubPAT{OAuth2Token: "ghp_token"},
 	})
@@ -444,6 +445,62 @@ func TestScaleSets(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := client.DeleteScaleSet(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestGiteaEndpointsAndCredentials(t *testing.T) {
+	ctx := context.Background()
+	client, _ := configuredClient(t)
+	gitea := params.GiteaEndpointType
+
+	create := garm.CreateEndpointParams{
+		Name: "local", APIBaseURL: "http://gitea/api/v1", BaseURL: "http://gitea",
+		ToolsMetadataURL: "http://gitea/releases.json",
+	}
+	if err := client.CreateEndpoint(ctx, gitea, create); err != nil {
+		t.Fatal(err)
+	}
+	endpoints, err := client.ListEndpoints(ctx, gitea)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(endpoints) != 1 || endpoints[0].Name != "local" || endpoints[0].ToolsMetadataURL != create.ToolsMetadataURL {
+		t.Fatalf("ListEndpoints() = %+v, want the created endpoint", endpoints)
+	}
+	github, err := client.ListEndpoints(ctx, params.GithubEndpointType)
+	if err != nil || len(github) != 1 || github[0].Name != "github.com" {
+		t.Fatalf("ListEndpoints() for GitHub = %+v, %v, want the endpoint garm ships", github, err)
+	}
+
+	err = client.CreateCredentials(ctx, gitea, params.CreateGithubCredentialsParams{
+		Name: "main", Endpoint: "local", AuthType: params.ForgeAuthTypePAT, PAT: params.GithubPAT{OAuth2Token: "token"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	creds, err := client.ListCredentials(ctx, gitea)
+	if err != nil || len(creds) != 1 || creds[0].ForgeType != gitea {
+		t.Fatalf("ListCredentials() = %+v, %v, want the Gitea credentials", creds, err)
+	}
+	if creds, err := client.ListCredentials(ctx, params.GithubEndpointType); err != nil || len(creds) != 0 {
+		t.Errorf("ListCredentials() for GitHub = %+v, %v, want none", creds, err)
+	}
+
+	moved := garm.UpdateEndpointParams{BaseURL: ptr("http://other")}
+	if err := client.UpdateEndpoint(ctx, gitea, "local", moved); !garm.IsBadRequest(err) {
+		t.Errorf("UpdateEndpoint() of the URL of a used endpoint: error = %v, want a bad request", err)
+	}
+	if err := client.UpdateEndpoint(ctx, gitea, "local", garm.UpdateEndpointParams{Description: ptr("changed")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.DeleteEndpoint(ctx, gitea, "local"); !garm.IsBadRequest(err) {
+		t.Errorf("DeleteEndpoint() of a used endpoint: error = %v, want a bad request", err)
+	}
+	if err := client.DeleteCredentials(ctx, gitea, creds[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.DeleteEndpoint(ctx, gitea, "local"); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -144,6 +144,29 @@ github:
   enterprises:
     corp:
       credentials_name: main
+gitea:
+  endpoints:
+    local:
+      api_base_url: http://127.0.0.1:1/api/v1
+      base_url: http://127.0.0.1:1
+      tools_metadata_url: http://127.0.0.1:1/releases.json
+  credentials:
+    main:
+      endpoint: local
+      pat:
+        oauth2_token: {_secret: github-token}
+  repositories:
+    owner/repo:
+      credentials_name: main
+      pools:
+        coco:
+          provider_name: incus
+          image: ubuntu
+          flavor: default
+          os_type: linux
+          os_arch: amd64
+          tags: [coco]
+          max_runners: 1
 `
 
 // TestAgainstGarm reconciles a real garm controller. It verifies what the
@@ -187,11 +210,15 @@ func TestAgainstGarm(t *testing.T) {
 update controller (agent_url, callback_url, metadata_url, webhook_url)
 create github credentials main
 create github template custom
-create repository owner/repo
-create organization my-org
+create github repository owner/repo
+create github organization my-org
 create pool my-org/coco
 create pool my-org/plain
-create enterprise corp
+create github enterprise corp
+create gitea endpoint local
+create gitea credentials main
+create gitea repository owner/repo
+create pool owner/repo/coco
 `)
 
 	change("description: created by the integration test", "description: updated")
@@ -206,24 +233,31 @@ create enterprise corp
 	change("            disable_updates: true\n", "")
 	change("          enabled: true\n          priority: 5\n", "")
 	change("        echo install\n", "        echo changed\n")
+	change("      tools_metadata_url: http://127.0.0.1:1/releases.json\n", "      description: local Gitea\n")
 	reconcile(state, `update github credentials main (description)
 update github template custom (data)
-update organization my-org (pool_balancer_type, agent_mode)
+update github organization my-org (pool_balancer_type, agent_mode)
 update pool my-org/coco (enable_shell, enabled, extra_specs, github-runner-group, max_runners, runner_bootstrap_timeout, tags)
 update pool my-org/plain (enabled, priority)
+update gitea endpoint local (description)
 `)
 
-	// Renaming the credentials replaces them, the rest gets deleted.
+	// Renaming the credentials replaces them. The rest gets deleted,
+	// including everything on Gitea.
 	state = strings.ReplaceAll(state, "credentials_name: main", "credentials_name: renamed")
 	change("    main:\n", "    renamed:\n")
 	state = state[:strings.Index(state, "        plain:")]
 	state = state[:strings.Index(state, "  templates:")] + state[strings.Index(state, "  organizations:"):]
 	reconcile(state, `create github credentials renamed
-update organization my-org (credentials_name)
+update github organization my-org (credentials_name)
 delete pool my-org/plain
-delete repository owner/repo
-delete enterprise corp
+delete pool owner/repo/coco
+delete github repository owner/repo
+delete github enterprise corp
 delete github template custom
 delete github credentials main
+delete gitea repository owner/repo
+delete gitea credentials main
+delete gitea endpoint local
 `)
 }
