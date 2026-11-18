@@ -1,0 +1,28 @@
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        check: [package, vm-test, module-test]
+    name: ${{ matrix.check }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      # Makes /dev/kvm usable for the VM tests.
+      - uses: cachix/install-nix-action@v31
+      - run: nix build --print-build-logs .#checks.x86_64-linux.${{ matrix.check }}
