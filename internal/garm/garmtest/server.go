@@ -47,8 +47,7 @@ type State struct {
 	nextID uint
 }
 
-// Credentials are GitHub credentials including the secret garm never
-// returns.
+// Credentials are credentials including the secret garm never returns.
 type Credentials struct {
 	params.ForgeCredentials
 	PAT params.GithubPAT
@@ -83,6 +82,9 @@ func NewServer(t *testing.T) *Server {
 	}, {
 		ID: s.state.newID(), Name: "gitea_linux", OSType: commonparams.Linux,
 		ForgeType: params.GiteaEndpointType, Owner: params.SystemUser, Data: []byte("#!/bin/sh"),
+	}, {
+		ID: s.state.newID(), Name: "gitea_windows", OSType: commonparams.Windows,
+		ForgeType: params.GiteaEndpointType, Owner: params.SystemUser, Data: []byte("#ps1"),
 	}}
 	// It also has an endpoint for github.com.
 	s.state.Endpoints = []*params.ForgeEndpoint{{
@@ -329,8 +331,11 @@ func createEndpoint(forge params.EndpointType) handler {
 		if forge == params.GithubEndpointType && create.UploadBaseURL == "" {
 			return nil, badRequest("missing upload_base_url")
 		}
-		if st.findEndpoint(forge, create.Name) != nil {
-			return nil, conflict("%s endpoint already exists", forge)
+		// Endpoints of all forges share their names.
+		for _, e := range st.Endpoints {
+			if strings.EqualFold(e.Name, create.Name) {
+				return nil, conflict("%s endpoint already exists", forge)
+			}
 		}
 		endpoint := &params.ForgeEndpoint{
 			Name: create.Name, Description: create.Description, EndpointType: forge,
@@ -359,7 +364,8 @@ func updateEndpoint(forge params.EndpointType) handler {
 			return nil, err
 		}
 		changesURL := (update.APIBaseURL != nil && *update.APIBaseURL != endpoint.APIBaseURL) ||
-			(update.BaseURL != nil && *update.BaseURL != endpoint.BaseURL)
+			(update.BaseURL != nil && *update.BaseURL != endpoint.BaseURL) ||
+			(update.UploadBaseURL != nil && *update.UploadBaseURL != endpoint.UploadBaseURL)
 		if changesURL && st.endpointInUse(endpoint) {
 			return nil, badRequest("cannot update endpoint URLs with existing credentials")
 		}

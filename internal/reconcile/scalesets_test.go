@@ -45,8 +45,8 @@ func TestScaleSets(t *testing.T) {
 	changes := run{srv: srv, cfg: cfg}.ensure(t)
 	assertEqual(t, "changes", changes[4:], []string{
 		"create github organization my-org",
-		"create pool my-org/coco",
-		"create scale set my-org/coco-set",
+		"create github pool my-org/coco",
+		"create github scale set my-org/coco-set",
 		"create github enterprise corp",
 	})
 	srv.State(func(st *garmtest.State) {
@@ -64,7 +64,7 @@ func TestScaleSets(t *testing.T) {
 	changed.Prefix = "runner"
 	changed.ExtraSpecs = json.RawMessage(`{"disable_updates":true}`)
 	cfg.GitHub.Organizations["my-org"].ScaleSets["coco-set"] = changed
-	want := []string{"update scale set my-org/coco-set (enabled, extra_specs, max_runners, runner_prefix)"}
+	want := []string{"update github scale set my-org/coco-set (enabled, extra_specs, max_runners, runner_prefix)"}
 	assertEqual(t, "changes to plan", run{srv: srv, cfg: cfg, dryRun: true}.ensure(t), want)
 	assertEqual(t, "changes", run{srv: srv, cfg: cfg}.ensure(t), want)
 	srv.State(func(st *garmtest.State) {
@@ -94,7 +94,7 @@ func TestScaleSetImmutableSettings(t *testing.T) {
 
 			rec, _ := run{srv: srv, cfg: cfg}.reconciler(t)
 			err := rec.Ensure(context.Background())
-			want := "scale set my-org/coco-set: " + field + " cannot be changed"
+			want := "github scale set my-org/coco-set: " + field + " cannot be changed"
 			if err == nil || !strings.Contains(err.Error(), want) {
 				t.Errorf("Ensure() = %v, want it to contain %q", err, want)
 			}
@@ -126,8 +126,8 @@ func TestPruneScaleSets(t *testing.T) {
 	}
 	changes := run{srv: srv, cfg: cfg, progress: onProgress}.prune(t)
 	assertEqual(t, "changes", changes, []string{
-		"delete pool my-org/coco",
-		"delete scale set my-org/coco-set",
+		"delete github pool my-org/coco",
+		"delete github scale set my-org/coco-set",
 		"delete github organization my-org",
 	})
 	assertEqual(t, "progress", progress, []string{"waiting for the runners of my-org/coco-set"})
@@ -146,8 +146,8 @@ func TestPruneDisabledScaleSetOfDeclaredEntity(t *testing.T) {
 
 	delete(cfg.GitHub.Organizations["my-org"].ScaleSets, "old")
 	r := run{srv: srv, cfg: cfg}
-	assertEqual(t, "changes to plan", run{srv: srv, cfg: cfg, dryRun: true}.prune(t), []string{"delete scale set my-org/old"})
-	assertEqual(t, "changes", r.prune(t), []string{"delete scale set my-org/old"})
+	assertEqual(t, "changes to plan", run{srv: srv, cfg: cfg, dryRun: true}.prune(t), []string{"delete github scale set my-org/old"})
+	assertEqual(t, "changes", r.prune(t), []string{"delete github scale set my-org/old"})
 	srv.State(func(st *garmtest.State) {
 		assertEqual(t, "scale sets", len(st.ScaleSets), 1)
 		assertEqual(t, "scale set", st.ScaleSets[0].Name, "coco-set")
@@ -207,7 +207,7 @@ func TestEnsureCoversAllScaleSetFields(t *testing.T) {
 	})
 	slices.Sort(fields)
 	changes := run{srv: srv, cfg: cfg}.ensure(t)
-	assertEqual(t, "changes", changes, []string{"update scale set my-org/coco-set (" + strings.Join(fields, ", ") + ")"})
+	assertEqual(t, "changes", changes, []string{"update github scale set my-org/coco-set (" + strings.Join(fields, ", ") + ")"})
 	assertEqual(t, "changes after updating the scale set", run{srv: srv, cfg: cfg}.ensure(t), nil)
 }
 
@@ -222,7 +222,7 @@ func TestScaleSetTemplate(t *testing.T) {
 	changes := run{srv: srv, cfg: cfg}.ensure(t)
 	assertEqual(t, "changes", changes, []string{
 		"create github template nixos",
-		"update scale set my-org/coco-set (template_id)",
+		"update github scale set my-org/coco-set (template_id)",
 	})
 	srv.State(func(st *garmtest.State) {
 		assertEqual(t, "template", st.ScaleSets[0].TemplateName, "nixos")
@@ -232,7 +232,7 @@ func TestScaleSetTemplate(t *testing.T) {
 	cfg.GitHub.Organizations["my-org"].ScaleSets["coco-set"] = set
 	rec, _ := run{srv: srv, cfg: cfg}.reconciler(t)
 	err := rec.Ensure(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "scale set my-org/coco-set: template missing is neither declared") {
+	if err == nil || !strings.Contains(err.Error(), "github scale set my-org/coco-set: template missing is neither declared") {
 		t.Errorf("Ensure() = %v, want it to report the unknown template", err)
 	}
 }
@@ -252,7 +252,7 @@ func TestScaleSetExtraSpecsAndLabels(t *testing.T) {
 
 	set.ExtraSpecs = nil
 	cfg.GitHub.Organizations["my-org"].ScaleSets["coco-set"] = set
-	assertEqual(t, "changes", run{srv: srv, cfg: cfg}.ensure(t), []string{"update scale set my-org/coco-set (extra_specs)"})
+	assertEqual(t, "changes", run{srv: srv, cfg: cfg}.ensure(t), []string{"update github scale set my-org/coco-set (extra_specs)"})
 	srv.State(func(st *garmtest.State) {
 		assertEqual(t, "extra specs", string(st.ScaleSets[0].ExtraSpecs), "{}")
 	})
@@ -267,7 +267,7 @@ func TestDryRunWithNewEntityAndScaleSet(t *testing.T) {
 		ScaleSets:       map[string]config.ScaleSet{"coco-set": scaleSet()},
 	}
 	changes := run{srv: srv, cfg: cfg, dryRun: true}.ensure(t)
-	assertEqual(t, "changes", changes, []string{"create github organization new-org", "create scale set new-org/coco-set"})
+	assertEqual(t, "changes", changes, []string{"create github organization new-org", "create github scale set new-org/coco-set"})
 }
 
 func TestEnsureRejectsAmbiguousScaleSets(t *testing.T) {
@@ -282,7 +282,7 @@ func TestEnsureRejectsAmbiguousScaleSets(t *testing.T) {
 
 	rec, _ := run{srv: srv, cfg: cfg}.reconciler(t)
 	err := rec.Ensure(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "scale set my-org/coco-set: 2 scale sets share this name") {
+	if err == nil || !strings.Contains(err.Error(), "github scale set my-org/coco-set: 2 scale sets share this name") {
 		t.Errorf("Ensure() = %v, want it to reject the duplicate scale sets", err)
 	}
 }
@@ -298,7 +298,7 @@ func TestPruneReportsScaleSetThatGarmKeeps(t *testing.T) {
 		t.Fatal(err)
 	}
 	err := rec.Prune(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "delete scale set my-org/coco-set: garm did not delete the scale set") {
+	if err == nil || !strings.Contains(err.Error(), "delete github scale set my-org/coco-set: garm did not delete the scale set") {
 		t.Errorf("Prune() = %v, want it to notice that the scale set still exists", err)
 	}
 }

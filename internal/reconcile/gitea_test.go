@@ -52,8 +52,8 @@ func TestGitea(t *testing.T) {
 		"create gitea credentials main",
 		"create gitea template nixos",
 		"create gitea repository owner/repo",
-		"create pool owner/repo/coco",
-		"create pool owner/repo/nixos",
+		"create gitea pool owner/repo/coco",
+		"create gitea pool owner/repo/nixos",
 	})
 	srv.State(func(st *garmtest.State) {
 		assertEqual(t, "endpoints", len(st.Endpoints), 2)
@@ -81,12 +81,16 @@ func TestGitea(t *testing.T) {
 	want := []string{"update gitea endpoint local (description, tools_metadata_url)"}
 	assertEqual(t, "changes to plan", run{srv: srv, cfg: cfg, dryRun: true}.ensure(t), want)
 	assertEqual(t, "changes", run{srv: srv, cfg: cfg}.ensure(t), want)
+	srv.State(func(st *garmtest.State) {
+		assertEqual(t, "description", st.Endpoints[1].Description, "changed")
+		assertEqual(t, "tools metadata URL", st.Endpoints[1].ToolsMetadataURL, "http://gitea/other.json")
+	})
 
 	// Everything on Gitea goes away, the namesakes on GitHub stay.
 	cfg.Gitea = config.Forge{}
 	assertEqual(t, "changes to prune", run{srv: srv, cfg: cfg}.prune(t), []string{
-		"delete pool owner/repo/coco",
-		"delete pool owner/repo/nixos",
+		"delete gitea pool owner/repo/coco",
+		"delete gitea pool owner/repo/nixos",
 		"delete gitea repository owner/repo",
 		"delete gitea template nixos",
 		"delete gitea credentials main",
@@ -108,11 +112,62 @@ func TestEndpointURLOfUsedEndpointCannotChange(t *testing.T) {
 	endpoint.BaseURL = "http://moved"
 	cfg.Gitea.Endpoints["local"] = endpoint
 
-	rec, _ := run{srv: srv, cfg: cfg}.reconciler(t)
-	err := rec.Ensure(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "update gitea endpoint local (base_url): garm: Bad Request: cannot update endpoint URLs") {
-		t.Errorf("Ensure() = %v, want garm to refuse the new URL", err)
+	// The plan fails as well, instead of showing a change apply cannot make.
+	for _, dryRun := range []bool{true, false} {
+		rec, _ := run{srv: srv, cfg: cfg, dryRun: dryRun}.reconciler(t)
+		err := rec.Ensure(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "gitea endpoint local: base_url cannot be changed while credentials use the endpoint") {
+			t.Errorf("Ensure() = %v, want it to refuse the new URL", err)
+		}
 	}
+}
+
+func TestEndpointUpdates(t *testing.T) {
+	cfg := desiredState()
+	cfg.GitHub.Endpoints = map[string]config.Endpoint{
+		"ghes": {
+			APIBaseURL:    "https://ghes.example.com/api/v3",
+			BaseURL:       "https://ghes.example.com",
+			UploadBaseURL: "https://ghes.example.com/api/uploads",
+			CACertBundle:  "first bundle",
+		},
+	}
+	srv := initialized(t, cfg)
+	// Garm compares the names of endpoints without regard to case.
+	srv.State(func(st *garmtest.State) { st.Endpoints[1].Name = "GHES" })
+
+	cfg.GitHub.Endpoints["ghes"] = config.Endpoint{
+		Description:   "moved",
+		APIBaseURL:    "https://moved.example.com/api/v3",
+		BaseURL:       "https://moved.example.com",
+		UploadBaseURL: "https://moved.example.com/api/uploads",
+		CACertBundle:  "second bundle",
+	}
+	changes := run{srv: srv, cfg: cfg}.ensure(t)
+	assertEqual(t, "changes", changes, []string{
+		"update github endpoint ghes (api_base_url, base_url, description, ca_cert_bundle, upload_base_url)",
+	})
+	srv.State(func(st *garmtest.State) {
+		assertEqual(t, "endpoints", len(st.Endpoints), 2)
+		assertEqual(t, "endpoint", *st.Endpoints[1], params.ForgeEndpoint{
+			Name:          "GHES",
+			Description:   "moved",
+			EndpointType:  params.GithubEndpointType,
+			APIBaseURL:    "https://moved.example.com/api/v3",
+			BaseURL:       "https://moved.example.com",
+			UploadBaseURL: "https://moved.example.com/api/uploads",
+			CACertBundle:  []byte("second bundle"),
+		})
+	})
+
+	// A CA bundle that is not declared is left alone.
+	undeclared := cfg.GitHub.Endpoints["ghes"]
+	undeclared.CACertBundle = ""
+	cfg.GitHub.Endpoints["ghes"] = undeclared
+	assertEqual(t, "changes without CA bundle", run{srv: srv, cfg: cfg}.prune(t), nil)
+	srv.State(func(st *garmtest.State) {
+		assertEqual(t, "CA bundle", string(st.Endpoints[1].CACertBundle), "second bundle")
+	})
 }
 
 func TestCustomGitHubEndpoint(t *testing.T) {

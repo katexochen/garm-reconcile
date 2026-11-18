@@ -357,7 +357,7 @@ func TestTemplates(t *testing.T) {
 	}
 	// Garm ships templates of its own.
 	last := templates[len(templates)-1]
-	if len(templates) != 4 || last.Name != "nixos" || last.Data != nil {
+	if len(templates) != 5 || last.Name != "nixos" || last.Data != nil {
 		t.Fatalf("ListTemplates() = %+v, want the created template without data", templates)
 	}
 

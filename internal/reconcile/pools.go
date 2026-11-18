@@ -25,6 +25,9 @@ func isPool(pool params.Pool, prefix string, want params.CreatePoolParams) bool 
 // ensurePools creates and updates the pools of an entity. entityID is empty
 // in a dry run that would create the entity.
 func (r *Reconciler) ensurePools(ctx context.Context, f *forge, kind garm.EntityKind, entityName, entityID string, declared map[string]config.Pool) error {
+	if len(declared) == 0 {
+		return nil
+	}
 	var existing []params.Pool
 	if entityID != "" {
 		var err error
@@ -40,7 +43,7 @@ func (r *Reconciler) ensurePools(ctx context.Context, f *forge, kind garm.Entity
 		name := entityName + "/" + prefix
 		id, err := f.templateID(declared[prefix].Template, want.OSType)
 		if err != nil {
-			return fmt.Errorf("%s %s: %w", KindPool, name, err)
+			return fmt.Errorf("%s %s: %w", f.kind("pool"), name, err)
 		}
 		want.TemplateID = &id
 
@@ -52,14 +55,14 @@ func (r *Reconciler) ensurePools(ctx context.Context, f *forge, kind garm.Entity
 		}
 		switch len(matches) {
 		case 0:
-			err = r.apply(Change{Action: Create, Kind: KindPool, Name: name}, func() error {
+			err = r.apply(Change{Action: Create, Kind: f.kind("pool"), Name: name}, func() error {
 				return r.client.CreateEntityPool(ctx, kind, entityID, want)
 			})
 		case 1:
-			err = r.updatePool(ctx, name, matches[0].ID, want)
+			err = r.updatePool(ctx, f, name, matches[0].ID, want)
 		default:
 			err = fmt.Errorf("%s %s: %d pools of provider %s share this runner prefix, which has to be unique",
-				KindPool, name, len(matches), want.ProviderName)
+				f.kind("pool"), name, len(matches), want.ProviderName)
 		}
 		if err != nil {
 			return err
@@ -69,17 +72,17 @@ func (r *Reconciler) ensurePools(ctx context.Context, f *forge, kind garm.Entity
 }
 
 // updatePool brings the pool with the given ID to its declared state.
-func (r *Reconciler) updatePool(ctx context.Context, name, id string, want params.CreatePoolParams) error {
+func (r *Reconciler) updatePool(ctx context.Context, f *forge, name, id string, want params.CreatePoolParams) error {
 	// Listed pools lack some of their settings.
 	have, err := r.client.GetPool(ctx, id)
 	if err != nil {
-		return fmt.Errorf("reading %s %s: %w", KindPool, name, err)
+		return fmt.Errorf("reading %s %s: %w", f.kind("pool"), name, err)
 	}
 	fields, err := poolDiff(want, have)
 	if err != nil || len(fields) == 0 {
 		return err
 	}
-	return r.apply(Change{Action: Update, Kind: KindPool, Name: name, Fields: fields}, func() error {
+	return r.apply(Change{Action: Update, Kind: f.kind("pool"), Name: name, Fields: fields}, func() error {
 		return r.client.UpdatePool(ctx, id, poolUpdate(want, fields))
 	})
 }
@@ -176,7 +179,7 @@ func extraSpecs(specs json.RawMessage) json.RawMessage {
 // stalePools returns the pools that are not declared.
 func (r *Reconciler) stalePools(ctx context.Context, f *forge) ([]runnerSet, error) {
 	var stale []runnerSet
-	for _, kind := range entityKinds {
+	for _, kind := range f.entityKinds() {
 		entities, err := r.forgeEntities(ctx, f, kind)
 		if err != nil {
 			return nil, err
@@ -194,7 +197,7 @@ func (r *Reconciler) stalePools(ctx context.Context, f *forge) ([]runnerSet, err
 					continue
 				}
 				stale = append(stale, runnerSet{
-					kind:    KindPool,
+					kind:    f.kind("pool"),
 					name:    entity.FullName() + "/" + pool.GetRunnerPrefix(),
 					enabled: pool.Enabled,
 					disable: func(ctx context.Context) error {

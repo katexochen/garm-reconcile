@@ -13,10 +13,16 @@ import (
 	"github.com/katexochen/garm-reconcile/internal/garm"
 )
 
-var entityKinds = []garm.EntityKind{garm.Repository, garm.Organization, garm.Enterprise}
+// entityKinds returns the kinds of entities the forge has.
+func (f *forge) entityKinds() []garm.EntityKind {
+	if f.typ == params.GiteaEndpointType {
+		return []garm.EntityKind{garm.Repository, garm.Organization}
+	}
+	return []garm.EntityKind{garm.Repository, garm.Organization, garm.Enterprise}
+}
 
-// declaredEntities returns the entities of a kind that are declared for
-// GitHub, keyed by their full name.
+// declaredEntities returns the entities of a kind that are declared for the
+// forge, keyed by their full name.
 func (f *forge) declaredEntities(kind garm.EntityKind) map[string]config.Entity {
 	switch kind {
 	case garm.Repository:
@@ -29,8 +35,8 @@ func (f *forge) declaredEntities(kind garm.EntityKind) map[string]config.Entity 
 	panic("unknown entity kind " + string(kind))
 }
 
-// forgeEntities lists the entities of a kind that live on GitHub
-// endpoints. Entities of other forges are not managed.
+// forgeEntities lists the entities of a kind that live on endpoints of the
+// forge.
 func (r *Reconciler) forgeEntities(ctx context.Context, f *forge, kind garm.EntityKind) ([]garm.Entity, error) {
 	entities, err := r.client.ListEntities(ctx, kind)
 	if err != nil {
@@ -60,7 +66,7 @@ func (f *forge) declaration(kind garm.EntityKind, have garm.Entity) (config.Enti
 }
 
 func (r *Reconciler) ensureEntities(ctx context.Context, f *forge) error {
-	for _, kind := range entityKinds {
+	for _, kind := range f.entityKinds() {
 		existing, err := r.forgeEntities(ctx, f, kind)
 		if err != nil {
 			return err
@@ -111,7 +117,7 @@ func (r *Reconciler) createEntity(ctx context.Context, f *forge, kind garm.Entit
 	}
 
 	var id string
-	err := r.apply(Change{Action: Create, Kind: f.kind(string(kind)), Name: name}, func() error {
+	err := r.apply(Change{Action: Create, Kind: f.entityKind(kind), Name: name}, func() error {
 		entity, err := r.client.CreateEntity(ctx, kind, create)
 		id = entity.ID
 		return err
@@ -136,7 +142,7 @@ func (r *Reconciler) updateEntity(ctx context.Context, f *forge, kind garm.Entit
 	}
 
 	if len(fields) > 0 {
-		r.opts.Report(Change{Action: Update, Kind: f.kind(string(kind)), Name: name, Fields: fields})
+		r.opts.Report(Change{Action: Update, Kind: f.entityKind(kind), Name: name, Fields: fields})
 	}
 	// Garm does not reveal whether the webhook secret changed, so a
 	// declared one is always sent.
@@ -144,13 +150,13 @@ func (r *Reconciler) updateEntity(ctx context.Context, f *forge, kind garm.Entit
 		return nil
 	}
 	if err := r.client.UpdateEntity(ctx, kind, have.ID, update); err != nil {
-		return fmt.Errorf("update %s %s: %w", kind, name, err)
+		return fmt.Errorf("update %s %s: %w", f.entityKind(kind), name, err)
 	}
 	return nil
 }
 
 func (r *Reconciler) pruneEntities(ctx context.Context, f *forge) error {
-	for _, kind := range entityKinds {
+	for _, kind := range f.entityKinds() {
 		existing, err := r.forgeEntities(ctx, f, kind)
 		if err != nil {
 			return err
@@ -159,7 +165,7 @@ func (r *Reconciler) pruneEntities(ctx context.Context, f *forge) error {
 			if _, declared := f.declaration(kind, have); declared {
 				continue
 			}
-			err := r.apply(Change{Action: Delete, Kind: f.kind(string(kind)), Name: have.FullName()}, func() error {
+			err := r.apply(Change{Action: Delete, Kind: f.entityKind(kind), Name: have.FullName()}, func() error {
 				return r.client.DeleteEntity(ctx, kind, have.ID)
 			})
 			if err != nil {

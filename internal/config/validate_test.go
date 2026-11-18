@@ -279,6 +279,49 @@ func TestValidate(t *testing.T) {
 			},
 			wantErr: "gitea.organizations.org.scale_sets: Gitea has no scale sets",
 		},
+		"template declared for both forges": {
+			change: func(c *Config) {
+				c.GitHub.Templates = map[string]Template{"nixos": {OSType: "linux", Data: "#!/bin/sh"}}
+				c.Gitea.Templates = map[string]Template{"nixos": {OSType: "linux", Data: "#!/bin/sh"}}
+			},
+			wantErr: "gitea.templates.nixos: garm has no room for a GitHub and a Gitea template of the same name",
+		},
+		"endpoint declared for both forges": {
+			change: func(c *Config) {
+				c.GitHub.Endpoints = map[string]Endpoint{"Local": {APIBaseURL: "https://ghes/api/v3", BaseURL: "https://ghes", UploadBaseURL: "https://ghes/up"}}
+				c.Gitea.Endpoints = map[string]Endpoint{"local": {APIBaseURL: "http://gitea/api/v1", BaseURL: "http://gitea"}}
+			},
+			wantErr: "gitea.endpoints.local: garm has no room for this endpoint next to the GitHub endpoint Local",
+		},
+		"Gitea endpoint named like the one garm ships": {
+			change: func(c *Config) {
+				c.Gitea.Endpoints = map[string]Endpoint{"GitHub.com": {APIBaseURL: "http://gitea/api/v1", BaseURL: "http://gitea"}}
+			},
+			wantErr: "gitea.endpoints.GitHub.com: garm has no room for this endpoint next to the GitHub endpoint github.com",
+		},
+		"endpoints that only differ in case": {
+			change: func(c *Config) {
+				c.Gitea.Endpoints = map[string]Endpoint{
+					"local": {APIBaseURL: "http://gitea/api/v1", BaseURL: "http://gitea"},
+					"Local": {APIBaseURL: "http://gitea/api/v1", BaseURL: "http://gitea"},
+				}
+			},
+			wantErr: "gitea.endpoints: Local and local only differ in case",
+		},
+		"Gitea endpoint with invalid tools metadata URL": {
+			change: func(c *Config) {
+				c.Gitea.Endpoints = map[string]Endpoint{"local": {
+					APIBaseURL: "http://gitea/api/v1", BaseURL: "http://gitea", ToolsMetadataURL: "releases.json",
+				}}
+			},
+			wantErr: `gitea.endpoints.local.tools_metadata_url: "releases.json" is not an absolute URL`,
+		},
+		"Gitea repository with scale set": {
+			change: func(c *Config) {
+				c.Gitea.Repositories = map[string]Entity{"owner/repo": {ScaleSets: map[string]ScaleSet{"set": {}}}}
+			},
+			wantErr: "gitea.repositories.owner/repo.scale_sets: Gitea has no scale sets",
+		},
 		"pool rejected by garm": {
 			change:  withPool("coco", func(p *Pool) { p.MinIdleRunners = 3 }),
 			wantErr: "github.organizations.my-org.pools.coco: min_idle_runners cannot be larger than max_runners",

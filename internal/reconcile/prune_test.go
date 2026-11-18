@@ -50,8 +50,8 @@ func TestPruneDeletesUndeclaredResources(t *testing.T) {
 
 	changes := run{srv: srv, cfg: cfg}.prune(t)
 	assertEqual(t, "changes", changes, []string{
-		"delete pool legacy-org/old",
-		"delete pool my-org/old",
+		"delete github pool legacy-org/old",
+		"delete github pool my-org/old",
 		"delete github organization legacy-org",
 		"delete github enterprise corp",
 		"delete github credentials legacy",
@@ -109,7 +109,7 @@ func TestPruneWaitsForBusyRunners(t *testing.T) {
 	}
 
 	changes := run{srv: srv, cfg: cfg, progress: onProgress}.prune(t)
-	assertEqual(t, "changes", changes, []string{"delete pool my-org/old"})
+	assertEqual(t, "changes", changes, []string{"delete github pool my-org/old"})
 	assertEqual(t, "progress", progress, []string{"waiting for the runners of my-org/old"})
 	// The first mutation sends the secret of the credentials again.
 	assertEqual(t, "mutations", takeMutations(srv)[1:], []string{
@@ -157,7 +157,7 @@ func TestPruneDisablesAllPoolsBeforeWaiting(t *testing.T) {
 		})
 	}
 	changes := run{srv: srv, cfg: cfg, progress: onProgress}.prune(t)
-	assertEqual(t, "changes", changes, []string{"delete pool owner/repo/other", "delete pool my-org/coco"})
+	assertEqual(t, "changes", changes, []string{"delete github pool owner/repo/other", "delete github pool my-org/coco"})
 	assertEqual(t, "first progress", progress[0], "waiting for the runners of owner/repo/other, my-org/coco")
 	srv.State(func(st *garmtest.State) {
 		assertEqual(t, "pools", len(st.Pools), 0)
@@ -202,14 +202,14 @@ func TestReplacedPoolIsCreatedBeforeTheOldOneIsDeleted(t *testing.T) {
 	cfg.GitHub.Organizations["my-org"].Pools["coco"] = replacement
 
 	r := run{srv: srv, cfg: cfg}
-	assertEqual(t, "changes to ensure", r.ensure(t), []string{"create pool my-org/coco"})
+	assertEqual(t, "changes to ensure", r.ensure(t), []string{"create github pool my-org/coco"})
 	srv.State(func(st *garmtest.State) {
 		assertEqual(t, "pools", len(st.Pools), 2)
 		assertEqual(t, "old pool enabled", st.Pools[0].Enabled, true)
 		assertEqual(t, "new pool provider", st.Pools[1].ProviderName, "lxd")
 	})
 
-	assertEqual(t, "changes to prune", r.prune(t), []string{"delete pool my-org/coco"})
+	assertEqual(t, "changes to prune", r.prune(t), []string{"delete github pool my-org/coco"})
 	srv.State(func(st *garmtest.State) {
 		assertEqual(t, "pools", len(st.Pools), 1)
 		assertEqual(t, "pool provider", st.Pools[0].ProviderName, "lxd")
@@ -227,7 +227,7 @@ func TestEnsureRejectsAmbiguousPools(t *testing.T) {
 
 	rec, _ := run{srv: srv, cfg: cfg}.reconciler(t)
 	err := rec.Ensure(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "pool my-org/coco: 2 pools of provider incus share this runner prefix") {
+	if err == nil || !strings.Contains(err.Error(), "github pool my-org/coco: 2 pools of provider incus share this runner prefix") {
 		t.Errorf("Ensure() = %v, want it to reject the duplicate pools", err)
 	}
 }
@@ -253,7 +253,7 @@ func TestEnsureIgnoresHowGarmStoresPools(t *testing.T) {
 	})
 
 	changes := run{srv: srv, cfg: cfg}.ensure(t)
-	assertEqual(t, "changes", changes, []string{"update pool my-org/coco (runner_prefix)"})
+	assertEqual(t, "changes", changes, []string{"update github pool my-org/coco (runner_prefix)"})
 	srv.State(func(st *garmtest.State) {
 		// Sending extra specs that only differ in formatting would make
 		// garm recreate the runners of the pool.
@@ -270,7 +270,7 @@ func TestEnsureClearsExtraSpecs(t *testing.T) {
 
 	cfg.GitHub.Organizations["my-org"].Pools["coco"] = pool()
 	changes := run{srv: srv, cfg: cfg}.ensure(t)
-	assertEqual(t, "changes", changes, []string{"update pool my-org/coco (extra_specs)"})
+	assertEqual(t, "changes", changes, []string{"update github pool my-org/coco (extra_specs)"})
 	srv.State(func(st *garmtest.State) {
 		assertEqual(t, "extra specs", string(st.Pools[0].ExtraSpecs), "{}")
 	})

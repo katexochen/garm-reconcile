@@ -62,8 +62,6 @@ type Kind string
 const (
 	KindAdmin      Kind = "admin user"
 	KindController Kind = "controller"
-	KindPool       Kind = "pool"
-	KindScaleSet   Kind = "scale set"
 )
 
 // forge is a type of forge together with what is declared for it.
@@ -80,6 +78,10 @@ type forge struct {
 
 func (f *forge) kind(resource string) Kind {
 	return Kind(string(f.typ) + " " + resource)
+}
+
+func (f *forge) entityKind(kind garm.EntityKind) Kind {
+	return f.kind(string(kind))
 }
 
 // Options configure a Reconciler.

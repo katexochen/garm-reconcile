@@ -41,9 +41,9 @@ func (r *Reconciler) createCredentials(ctx context.Context, f *forge, name strin
 		AuthType:    authType(want),
 	}
 	if want.PAT != nil {
-		create.PAT = githubPAT(want.PAT)
+		create.PAT = tokenParams(want.PAT)
 	} else {
-		create.App = githubApp(want.App)
+		create.App = appParams(want.App)
 	}
 	return r.apply(Change{Action: Create, Kind: f.kind("credentials"), Name: name}, func() error {
 		return r.client.CreateCredentials(ctx, f.typ, create)
@@ -65,10 +65,10 @@ func (r *Reconciler) updateCredentials(ctx context.Context, f *forge, name strin
 
 	update := params.UpdateGithubCredentialsParams{Description: &want.Description}
 	if want.PAT != nil {
-		pat := githubPAT(want.PAT)
+		pat := tokenParams(want.PAT)
 		update.PAT = &pat
 	} else {
-		app := githubApp(want.App)
+		app := appParams(want.App)
 		update.App = &app
 	}
 	if want.Description != have.Description {
@@ -120,11 +120,11 @@ func authType(c config.Credentials) params.ForgeAuthType {
 	return params.ForgeAuthTypePAT
 }
 
-func githubPAT(pat *config.PAT) params.GithubPAT {
+func tokenParams(pat *config.PAT) params.GithubPAT {
 	return params.GithubPAT{OAuth2Token: pat.OAuth2Token}
 }
 
-func githubApp(app *config.App) params.GithubApp {
+func appParams(app *config.App) params.GithubApp {
 	return params.GithubApp{
 		AppID:           app.AppID,
 		InstallationID:  app.InstallationID,

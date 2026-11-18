@@ -158,7 +158,7 @@ func TestPlanAndApply(t *testing.T) {
 update controller (agent_url, callback_url, metadata_url)
 create github credentials main
 create github organization my-org
-create pool my-org/coco
+create github pool my-org/coco
 `
 	if stdout != want {
 		t.Errorf("apply printed:\n%s\nwant:\n%s", stdout, want)
@@ -179,10 +179,10 @@ create pool my-org/coco
 	if stdout := mustExecute(t, "apply", "-url", srv.URL, path); stdout != "" {
 		t.Errorf("apply without -prune printed %q, want no changes", stdout)
 	}
-	if stdout := mustExecute(t, "plan", "-url", srv.URL, "-prune", path); stdout != "delete pool my-org/coco\n" {
+	if stdout := mustExecute(t, "plan", "-url", srv.URL, "-prune", path); stdout != "delete github pool my-org/coco\n" {
 		t.Errorf("plan -prune printed %q", stdout)
 	}
-	if stdout := mustExecute(t, "apply", "-url", srv.URL, "-prune", path); stdout != "delete pool my-org/coco\n" {
+	if stdout := mustExecute(t, "apply", "-url", srv.URL, "-prune", path); stdout != "delete github pool my-org/coco\n" {
 		t.Errorf("apply -prune printed %q", stdout)
 	}
 	srv.State(func(st *garmtest.State) {
@@ -240,7 +240,7 @@ func TestApplyNotifiesSystemd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
-	if stdout != "delete pool my-org/coco\n" {
+	if stdout != "delete github pool my-org/coco\n" {
 		t.Errorf("apply printed %q", stdout)
 	}
 	if stderr != "waiting for the runners of my-org/coco\n" {

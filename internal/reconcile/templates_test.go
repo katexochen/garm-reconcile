@@ -44,7 +44,7 @@ func TestTemplates(t *testing.T) {
 		"create github template nixos",
 		"create github repository owner/repo",
 		"create github organization my-org",
-		"create pool my-org/coco",
+		"create github pool my-org/coco",
 		"create github enterprise corp",
 	})
 	srv.State(func(st *garmtest.State) {
@@ -75,10 +75,10 @@ func TestTemplates(t *testing.T) {
 	shipped.Template = "github_linux"
 	cfg.GitHub.Organizations["my-org"].Pools["coco"] = shipped
 	r := run{srv: srv, cfg: cfg}
-	assertEqual(t, "changes to ensure", r.ensure(t), []string{"update pool my-org/coco (template_id)"})
+	assertEqual(t, "changes to ensure", r.ensure(t), []string{"update github pool my-org/coco (template_id)"})
 	assertEqual(t, "changes to prune", r.prune(t), []string{"delete github template nixos"})
 	srv.State(func(st *garmtest.State) {
-		assertEqual(t, "templates", len(st.Templates), 3)
+		assertEqual(t, "templates", len(st.Templates), 4)
 		assertEqual(t, "template of the pool", st.Pools[0].TemplateName, "github_linux")
 	})
 }
@@ -93,7 +93,7 @@ func TestTemplateAndItsReferenceAreRemoved(t *testing.T) {
 	delete(cfg.GitHub.Templates, "nixos")
 	cfg.GitHub.Organizations["my-org"].Pools["coco"] = pool()
 	r := run{srv: srv, cfg: cfg}
-	assertEqual(t, "changes to ensure", r.ensure(t), []string{"update pool my-org/coco (template_id)"})
+	assertEqual(t, "changes to ensure", r.ensure(t), []string{"update github pool my-org/coco (template_id)"})
 	assertEqual(t, "changes to prune", r.prune(t), []string{"delete github template nixos"})
 	srv.State(func(st *garmtest.State) {
 		assertEqual(t, "template of the pool", st.Pools[0].TemplateName, "github_linux")
@@ -108,7 +108,7 @@ func TestDeclaredTemplateTakesPrecedenceOverShipped(t *testing.T) {
 	srv := initialized(t, cfg)
 
 	cfg.GitHub.Templates = map[string]config.Template{"github_linux": {OSType: "linux", Data: "#!/bin/sh"}}
-	want := []string{"create github template github_linux", "update pool my-org/coco (template_id)"}
+	want := []string{"create github template github_linux", "update github pool my-org/coco (template_id)"}
 	assertEqual(t, "changes to plan", run{srv: srv, cfg: cfg, dryRun: true}.ensure(t), want)
 	assertEqual(t, "changes", run{srv: srv, cfg: cfg}.ensure(t), want)
 	srv.State(func(st *garmtest.State) {
@@ -140,7 +140,7 @@ func TestDryRunWithNewTemplate(t *testing.T) {
 	changes := run{srv: srv, cfg: cfg, dryRun: true}.ensure(t)
 	assertEqual(t, "changes", changes, []string{
 		"create github template nixos",
-		"update pool my-org/coco (template_id)",
+		"update github pool my-org/coco (template_id)",
 	})
 	assertEqual(t, "mutations", takeMutations(srv), nil)
 }
@@ -154,7 +154,7 @@ func TestTemplateErrors(t *testing.T) {
 
 		rec, _ := run{srv: garmtest.NewServer(t), cfg: cfg}.reconciler(t)
 		err := rec.Ensure(context.Background())
-		if err == nil || !strings.Contains(err.Error(), "pool my-org/coco: template missing is neither declared nor shipped by garm") {
+		if err == nil || !strings.Contains(err.Error(), "github pool my-org/coco: template missing is neither declared nor shipped by garm") {
 			t.Errorf("Ensure() = %v, want it to report the unknown template", err)
 		}
 	})

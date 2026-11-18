@@ -111,15 +111,14 @@ func (c *Client) DeleteEndpoint(ctx context.Context, forge params.EndpointType, 
 	return c.do(ctx, http.MethodDelete, nil, nil, string(forge), "endpoints", name)
 }
 
-// The requests for credentials are those of GitHub. Gitea takes the same
-// ones, apart from not having apps.
-
 func (c *Client) ListCredentials(ctx context.Context, forge params.EndpointType) ([]params.ForgeCredentials, error) {
 	var creds []params.ForgeCredentials
 	err := c.do(ctx, http.MethodGet, nil, &creds, string(forge), "credentials")
 	return creds, err
 }
 
+// CreateCredentials creates credentials for a forge. The request is the one
+// for GitHub, which Gitea takes as well, apart from not having apps.
 func (c *Client) CreateCredentials(ctx context.Context, forge params.EndpointType, create params.CreateGithubCredentialsParams) error {
 	return c.do(ctx, http.MethodPost, create, nil, string(forge), "credentials")
 }

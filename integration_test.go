@@ -212,13 +212,13 @@ create github credentials main
 create github template custom
 create github repository owner/repo
 create github organization my-org
-create pool my-org/coco
-create pool my-org/plain
+create github pool my-org/coco
+create github pool my-org/plain
 create github enterprise corp
 create gitea endpoint local
 create gitea credentials main
 create gitea repository owner/repo
-create pool owner/repo/coco
+create gitea pool owner/repo/coco
 `)
 
 	change("description: created by the integration test", "description: updated")
@@ -237,8 +237,8 @@ create pool owner/repo/coco
 	reconcile(state, `update github credentials main (description)
 update github template custom (data)
 update github organization my-org (pool_balancer_type, agent_mode)
-update pool my-org/coco (enable_shell, enabled, extra_specs, github-runner-group, max_runners, runner_bootstrap_timeout, tags)
-update pool my-org/plain (enabled, priority)
+update github pool my-org/coco (enable_shell, enabled, extra_specs, github-runner-group, max_runners, runner_bootstrap_timeout, tags)
+update github pool my-org/plain (enabled, priority)
 update gitea endpoint local (description)
 `)
 
@@ -250,8 +250,8 @@ update gitea endpoint local (description)
 	state = state[:strings.Index(state, "  templates:")] + state[strings.Index(state, "  organizations:"):]
 	reconcile(state, `create github credentials renamed
 update github organization my-org (credentials_name)
-delete pool my-org/plain
-delete pool owner/repo/coco
+delete github pool my-org/plain
+delete gitea pool owner/repo/coco
 delete github repository owner/repo
 delete github enterprise corp
 delete github template custom

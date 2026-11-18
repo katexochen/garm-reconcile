@@ -157,7 +157,7 @@ func TestEnsureCreatesDeclaredResources(t *testing.T) {
 		"create github credentials main",
 		"create github repository owner/repo",
 		"create github organization my-org",
-		"create pool my-org/coco",
+		"create github pool my-org/coco",
 		"create github enterprise corp",
 	})
 
@@ -238,7 +238,7 @@ func TestEnsureUpdates(t *testing.T) {
 		"update github credentials main (description)",
 		"create github credentials other",
 		"update github repository owner/repo (credentials_name, pool_balancer_type, agent_mode)",
-		"update pool my-org/coco (enabled, max_runners, tags)",
+		"update github pool my-org/coco (enabled, max_runners, tags)",
 	})
 
 	srv.State(func(st *garmtest.State) {
@@ -358,7 +358,7 @@ func TestEnsureReportsFailedChange(t *testing.T) {
 
 	rec, _ := run{srv: srv, cfg: cfg}.reconciler(t)
 	err := rec.Ensure(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "create pool my-org/broken: garm: Bad Request") {
+	if err == nil || !strings.Contains(err.Error(), "create github pool my-org/broken: garm: Bad Request") {
 		t.Errorf("Ensure() = %v, want it to name the failed change", err)
 	}
 }
@@ -384,9 +384,9 @@ func TestDryRun(t *testing.T) {
 	assertEqual(t, "changes to ensure", r.ensure(t), []string{
 		"update github credentials main (description)",
 		"update github repository owner/repo (agent_mode)",
-		"update pool my-org/coco (max_runners)",
+		"update github pool my-org/coco (max_runners)",
 		"create github organization new-org",
-		"create pool new-org/coco",
+		"create github pool new-org/coco",
 	})
 	assertEqual(t, "changes to prune", r.prune(t), []string{"delete github enterprise corp"})
 	assertEqual(t, "mutations", takeMutations(srv), nil)
@@ -444,7 +444,7 @@ func TestEnsureMatchesEntitiesByEndpoint(t *testing.T) {
 	})
 
 	changes := run{srv: srv, cfg: cfg}.ensure(t)
-	assertEqual(t, "changes", changes, []string{"create github organization my-org", "create pool my-org/coco"})
+	assertEqual(t, "changes", changes, []string{"create github organization my-org", "create github pool my-org/coco"})
 }
 
 func jsonNames(t reflect.Type) []string {
@@ -511,7 +511,7 @@ func TestEnsureCoversAllPoolFields(t *testing.T) {
 	})
 	slices.Sort(fields)
 	changes = run{srv: srv, cfg: cfg}.ensure(t)
-	assertEqual(t, "changes", changes, []string{"update pool my-org/coco (" + strings.Join(fields, ", ") + ")"})
+	assertEqual(t, "changes", changes, []string{"update github pool my-org/coco (" + strings.Join(fields, ", ") + ")"})
 
 	changes = run{srv: srv, cfg: cfg}.ensure(t)
 	assertEqual(t, "changes after updating the pool", changes, nil)

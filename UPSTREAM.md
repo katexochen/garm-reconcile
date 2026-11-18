@@ -68,6 +68,17 @@ the workaround named with it can go.
 - **The runner group is `github-runner-group` on create and `runner_group` on
   update.**
 
+## Forges
+
+- **Template names are not scoped by forge.** The unique index is on name
+  and user, so a GitHub and a Gitea template cannot share a name, although
+  a template only ever applies to one forge.
+- **Without webhooks, garm notices late that a runner took or finished a
+  job.** It does not ask the forge for the state of its runners in between,
+  so `runner_status` can be minutes behind. A busy runner that garm reports
+  as idle is then only protected by the forge refusing to remove it, which
+  GitHub does. Whether Gitea does is not verified.
+
 ## Templates
 
 - **Admins can change and delete the templates garm ships.** Only users that

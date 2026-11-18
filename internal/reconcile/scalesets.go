@@ -21,6 +21,9 @@ const defaultRunnerGroup = "Default"
 // are identified by their name. entityID is empty in a dry run that would
 // create the entity.
 func (r *Reconciler) ensureScaleSets(ctx context.Context, f *forge, kind garm.EntityKind, entityName, entityID string, declared map[string]config.ScaleSet) error {
+	if len(declared) == 0 {
+		return nil
+	}
 	var existing []params.ScaleSet
 	if entityID != "" {
 		var err error
@@ -36,7 +39,7 @@ func (r *Reconciler) ensureScaleSets(ctx context.Context, f *forge, kind garm.En
 		name := entityName + "/" + setName
 		id, err := f.templateID(declared[setName].Template, want.OSType)
 		if err != nil {
-			return fmt.Errorf("%s %s: %w", KindScaleSet, name, err)
+			return fmt.Errorf("%s %s: %w", f.kind("scale set"), name, err)
 		}
 		want.TemplateID = &id
 
@@ -48,15 +51,15 @@ func (r *Reconciler) ensureScaleSets(ctx context.Context, f *forge, kind garm.En
 		}
 		switch len(matches) {
 		case 0:
-			err = r.apply(Change{Action: Create, Kind: KindScaleSet, Name: name}, func() error {
+			err = r.apply(Change{Action: Create, Kind: f.kind("scale set"), Name: name}, func() error {
 				return r.client.CreateEntityScaleSet(ctx, kind, entityID, want)
 			})
 		case 1:
-			err = r.updateScaleSet(ctx, name, matches[0].ID, want)
+			err = r.updateScaleSet(ctx, f, name, matches[0].ID, want)
 		default:
 			// Garm does not keep names unique, it only intends to per
 			// runner group.
-			err = fmt.Errorf("%s %s: %d scale sets share this name, which has to be unique", KindScaleSet, name, len(matches))
+			err = fmt.Errorf("%s %s: %d scale sets share this name, which has to be unique", f.kind("scale set"), name, len(matches))
 		}
 		if err != nil {
 			return err
@@ -65,11 +68,11 @@ func (r *Reconciler) ensureScaleSets(ctx context.Context, f *forge, kind garm.En
 	return nil
 }
 
-func (r *Reconciler) updateScaleSet(ctx context.Context, name string, id uint, want params.CreateScaleSetParams) error {
+func (r *Reconciler) updateScaleSet(ctx context.Context, f *forge, name string, id uint, want params.CreateScaleSetParams) error {
 	// Listed scale sets lack their extra specs.
 	have, err := r.client.GetScaleSet(ctx, id)
 	if err != nil {
-		return fmt.Errorf("reading %s %s: %w", KindScaleSet, name, err)
+		return fmt.Errorf("reading %s %s: %w", f.kind("scale set"), name, err)
 	}
 	fields, err := scaleSetDiff(want, have)
 	if err != nil || len(fields) == 0 {
@@ -80,10 +83,10 @@ func (r *Reconciler) updateScaleSet(ctx context.Context, name string, id uint, w
 	for _, immutable := range []string{"provider_name", "labels", "disable_update"} {
 		if slices.Contains(fields, immutable) {
 			return fmt.Errorf("%s %s: %s cannot be changed, declare a scale set with another name instead",
-				KindScaleSet, name, immutable)
+				f.kind("scale set"), name, immutable)
 		}
 	}
-	return r.apply(Change{Action: Update, Kind: KindScaleSet, Name: name, Fields: fields}, func() error {
+	return r.apply(Change{Action: Update, Kind: f.kind("scale set"), Name: name, Fields: fields}, func() error {
 		return r.client.UpdateScaleSet(ctx, id, scaleSetUpdate(want, fields))
 	})
 }
@@ -163,13 +166,12 @@ func scaleSetUpdate(want params.CreateScaleSetParams, fields []string) params.Up
 
 // staleScaleSets returns the scale sets that are not declared.
 func (r *Reconciler) staleScaleSets(ctx context.Context, f *forge) ([]runnerSet, error) {
-	// Garm only has scale sets on GitHub, and answers with an error when
-	// asked for those of entities on other forges.
+	// Gitea has no scale sets.
 	if f.typ != params.GithubEndpointType {
 		return nil, nil
 	}
 	var stale []runnerSet
-	for _, kind := range entityKinds {
+	for _, kind := range f.entityKinds() {
 		entities, err := r.forgeEntities(ctx, f, kind)
 		if err != nil {
 			return nil, err
@@ -187,7 +189,7 @@ func (r *Reconciler) staleScaleSets(ctx context.Context, f *forge) ([]runnerSet,
 					continue
 				}
 				stale = append(stale, runnerSet{
-					kind:    KindScaleSet,
+					kind:    f.kind("scale set"),
 					name:    entity.FullName() + "/" + set.Name,
 					enabled: set.Enabled,
 					disable: func(ctx context.Context) error {

@@ -33,6 +33,7 @@ func (c *Config) Validate() error {
 	c.GitHub.validate("github", &p)
 	c.Gitea.validate("gitea", &p)
 	c.Gitea.validateGitea(&p)
+	c.validateSharedNames(&p)
 	return errors.Join(p...)
 }
 
@@ -57,6 +58,27 @@ func (c Controller) validate(p *problems) {
 	validateURL(p, "controller.callback_url", c.CallbackURL, true)
 	validateURL(p, "controller.agent_url", c.AgentURL, true)
 	validateURL(p, "controller.webhook_url", c.WebhookURL, false)
+}
+
+// validateSharedNames rejects names that are declared for both forges, where
+// garm has one namespace for them.
+func (c *Config) validateSharedNames(p *problems) {
+	for _, name := range sortedKeys(c.GitHub.Templates) {
+		if _, ok := c.Gitea.Templates[name]; ok {
+			p.addf("gitea.templates.%s: garm has no room for a GitHub and a Gitea template of the same name", name)
+		}
+	}
+	// Endpoint names are also compared without regard to case, and garm
+	// ships one.
+	github := map[string]string{strings.ToLower(DefaultGitHubEndpoint): DefaultGitHubEndpoint}
+	for name := range c.GitHub.Endpoints {
+		github[strings.ToLower(name)] = name
+	}
+	for _, name := range sortedKeys(c.Gitea.Endpoints) {
+		if other, ok := github[strings.ToLower(name)]; ok {
+			p.addf("gitea.endpoints.%s: garm has no room for this endpoint next to the GitHub endpoint %s", name, other)
+		}
+	}
 }
 
 func validateURL(p *problems, path, value string, required bool) {

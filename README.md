@@ -11,8 +11,8 @@ matches it.
 
 ```
 garm-reconcile validate <file>
-garm-reconcile plan  [-url URL] [-prune] <file>
-garm-reconcile apply [-url URL] [-prune] [-drain-timeout DURATION] <file>
+garm-reconcile plan  [-url URL] [-wait DURATION] [-prune] <file>
+garm-reconcile apply [-url URL] [-wait DURATION] [-prune] [-drain-timeout DURATION] <file>
 ```
 
 - `validate` checks the file without contacting garm. It does not read
@@ -28,8 +28,9 @@ the API to come up, for one minute unless `-wait` says otherwise.
 ## Desired state
 
 The file is YAML or JSON. Field names follow the garm API, except that
-resources are keyed by their name and that the private key of an app is given
-as PEM text in `private_key`.
+resources are keyed by their name and that keys and certificates are given as
+PEM text: the private key of an app in `private_key`, CA certificates in
+`ca_cert_bundle`.
 
 ```yaml
 admin:
@@ -107,7 +108,8 @@ gitea:
 ```
 
 `github` and `gitea` take the same sections. Gitea has no apps, enterprises and
-scale sets.
+scale sets. Endpoints and templates cannot have the same name on both forges,
+as garm keeps each of them in one namespace.
 
 Entities take `credentials_name`, `webhook_secret`, `pool_balancer_type`,
 `agent_mode`, `pools` and `scale_sets`. A webhook secret is generated when an
@@ -122,8 +124,9 @@ ships. Endpoints take `description`, `api_base_url`, `base_url` and
 `ca_cert_bundle`, GitHub endpoints also `upload_base_url`, and Gitea endpoints
 `tools_metadata_url`.
 
-garm does not change the URLs of an endpoint that has credentials, and cannot
-unset `ca_cert_bundle` and `tools_metadata_url`. Removing these two from the
+garm does not change the URLs of an endpoint that has credentials, so changing
+them is an error. Declare a new endpoint instead. garm cannot unset
+`ca_cert_bundle` and `tools_metadata_url` either. Removing these two from the
 desired state leaves them as they are.
 
 ### Pools
