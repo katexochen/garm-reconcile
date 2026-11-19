@@ -46,7 +46,7 @@ controller:
 
 github:
   credentials:
-    main:
+    cred1:
       endpoint: github.com
       pat:
         oauth2_token: { _secret: /run/secrets/github-token }
@@ -58,7 +58,7 @@ github:
 
   repositories:
     owner/name:
-      credentials_name: main
+      credentials_name: cred1
       pools:
         linux:
           provider_name: incus
@@ -73,7 +73,7 @@ github:
 
   organizations:
     my-org:
-      credentials_name: main
+      credentials_name: cred1
       install_webhook: true
       pools:
         large:
@@ -107,20 +107,14 @@ gitea:
       api_base_url: https://gitea.example.com/api/v1
       base_url: https://gitea.example.com
   credentials:
-    main:
+    cred1:
       endpoint: local
       pat:
         oauth2_token: { _secret: /run/secrets/gitea-token }
   repositories:
     owner/name:
-      credentials_name: main
+      credentials_name: cred1
 ```
-
-The example follows the order in which most setups grow: the admin user and
-the URLs of the controller are always needed, then credentials for a forge,
-then the repositories, organizations or enterprises that get runners, each
-with its pools. Templates and endpoints are only needed to change the
-installation of the runner or to use another instance of a forge.
 
 Repositories, organizations and enterprises are the levels at which runners
 can be registered. They can be mixed freely: the runners of a repository only
