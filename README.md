@@ -258,6 +258,10 @@ DynamicUser=yes
 With this unit, the state file references the secrets as
 `{ _secret: garm-admin-password }` and `{ _secret: github-token }`.
 
+garm-reconcile exits with status 3 when garm has an admin user already and
+rejects the declared one. Running it again does not help then, so a unit that
+restarts on failure should have `RestartPreventExitStatus=3`.
+
 ## Development
 
 ```

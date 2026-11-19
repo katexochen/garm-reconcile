@@ -60,6 +60,12 @@ func IsNotInitialized(err error) bool {
 	return errors.As(err, &apiErr) && apiErr.Code == apiparams.InitializationRequired.Error
 }
 
+// IsUnauthorized reports whether garm rejected the login.
+func IsUnauthorized(err error) bool {
+	var apiErr *Error
+	return errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusUnauthorized
+}
+
 // IsNotFound reports whether garm does not know the requested resource.
 func IsNotFound(err error) bool {
 	var apiErr *Error

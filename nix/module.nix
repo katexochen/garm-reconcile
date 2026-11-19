@@ -163,6 +163,8 @@ in
         DynamicUser = true;
         Restart = "on-failure";
         RestartSec = "10s";
+        # Garm has another admin user, which no retry changes.
+        RestartPreventExitStatus = 3;
       };
     };
   };

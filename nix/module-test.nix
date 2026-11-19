@@ -76,5 +76,24 @@
     )
     endpoint = machine.succeed("garm-cli gitea endpoint show local")
     assert "read from the store" in endpoint, f"unexpected endpoint: {endpoint}"
+
+    with subtest("a controller with another admin user fails the service for good"):
+        machine.succeed(
+            "systemctl stop garm-provision garm",
+            "rm -rf /var/lib/private/garm/*",
+            "systemctl start garm",
+        )
+        machine.wait_for_open_port(9997)
+        machine.succeed(
+            "garm-cli init --name other --url http://127.0.0.1:9997"
+            " --username other --email other@example.com"
+            " --password CbIhvLQTXCCfVROvLcJ2B7A85BGWbasV"
+        )
+        machine.fail("systemctl start garm-provision")
+        machine.succeed("systemctl is-failed garm-provision")
+        journal = machine.succeed("journalctl --no-pager -o cat -u garm-provision")
+        assert "garm has an admin user with another name or password" in journal, (
+            f"unexpected journal: {journal}"
+        )
   '';
 }

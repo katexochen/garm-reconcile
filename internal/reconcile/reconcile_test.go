@@ -366,8 +366,8 @@ func TestEnsureWrongPassword(t *testing.T) {
 
 	rec, _ := run{srv: srv, cfg: cfg}.reconciler(t)
 	err := rec.Ensure(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "logging in as admin") {
-		t.Errorf("Ensure() = %v, want a login error", err)
+	if !errors.Is(err, reconcile.ErrLoginRejected) || !strings.Contains(err.Error(), "logging in as admin") {
+		t.Errorf("Ensure() = %v, want a rejected login of admin", err)
 	}
 }
 

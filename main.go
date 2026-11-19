@@ -50,8 +50,20 @@ func main() {
 	err := app.run(ctx, os.Args[1:])
 	if err != nil && !errors.Is(err, flag.ErrHelp) {
 		fmt.Fprintln(os.Stderr, "garm-reconcile:", err)
-		os.Exit(1)
+		os.Exit(exitStatus(err))
 	}
+}
+
+// exitLoginRejected is the exit status for a failure that running again does
+// not fix, so that a service manager can tell it from the others. A panic
+// exits with 2.
+const exitLoginRejected = 3
+
+func exitStatus(err error) int {
+	if errors.Is(err, reconcile.ErrLoginRejected) {
+		return exitLoginRejected
+	}
+	return 1
 }
 
 type cli struct {

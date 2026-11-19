@@ -44,6 +44,10 @@ const defaultJobAgeBackoff = 30
 // controller, so everything declared is going to be created.
 var ErrNotInitialized = errors.New("garm is not initialized")
 
+// ErrLoginRejected is returned when garm has an admin user already and
+// does not accept the declared one. Trying again does not change that.
+var ErrLoginRejected = errors.New("garm has an admin user with another name or password")
+
 // Action is what reconciling does to a resource.
 type Action string
 
@@ -227,7 +231,7 @@ func (r *Reconciler) authenticate(ctx context.Context) error {
 		return nil
 	}
 	if !garm.IsNotInitialized(err) {
-		return fmt.Errorf("logging in as %s: %w", admin.Username, err)
+		return loginError(admin.Username, err)
 	}
 
 	err = r.apply(Change{Action: Create, Kind: KindAdmin, Name: admin.Username}, func() error {
@@ -245,9 +249,16 @@ func (r *Reconciler) authenticate(ctx context.Context) error {
 		return ErrNotInitialized
 	}
 	if err := r.client.Login(ctx, admin.Username, admin.Password); err != nil {
-		return fmt.Errorf("logging in as %s: %w", admin.Username, err)
+		return loginError(admin.Username, err)
 	}
 	return nil
+}
+
+func loginError(username string, err error) error {
+	if garm.IsUnauthorized(err) {
+		err = ErrLoginRejected
+	}
+	return fmt.Errorf("logging in as %s: %w", username, err)
 }
 
 func (r *Reconciler) ensureController(ctx context.Context) error {

@@ -207,6 +207,23 @@ create github pool my-org/coco
 	})
 }
 
+func TestRejectedLoginHasItsOwnExitStatus(t *testing.T) {
+	srv := garmtest.NewServer(t)
+	path := setup(t, desiredState)
+	mustExecute(t, "apply", "-url", srv.URL, path)
+
+	writeFile(t, os.Getenv("CREDENTIALS_DIRECTORY"), "admin-password", "changed\n")
+	_, _, err := execute(t, "apply", "-url", srv.URL, path)
+	if got := exitStatus(err); got != exitLoginRejected {
+		t.Errorf("exit status %d for %v, want %d", got, err, exitLoginRejected)
+	}
+
+	_, _, err = execute(t, "apply", "-url", "http://127.0.0.1:1", "-wait", "10ms", path)
+	if got := exitStatus(err); err == nil || got != 1 {
+		t.Errorf("exit status %d for %v, want 1", got, err)
+	}
+}
+
 // TestApplyNotifiesSystemd checks that the service is reported as started
 // once the declared state is in place, while pruning still waits for a job.
 func TestApplyNotifiesSystemd(t *testing.T) {
