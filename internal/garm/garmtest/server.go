@@ -1,3 +1,17 @@
+// Copyright 2026 Paul Meyer
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 // Package garmtest provides an in-memory fake of the garm API. It implements
 // the endpoints garm-reconcile uses and mirrors the rules garm enforces on
 // them, like refusing to delete a pool that has runners.
