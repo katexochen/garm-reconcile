@@ -55,6 +55,27 @@
             imports = [ ./nix/module-test.nix ];
             _module.args.module = self.nixosModules.default;
           };
+          # A desired state that is not valid fails the build of the system.
+          module-validation =
+            let
+              system = nixpkgs.lib.nixosSystem {
+                inherit (pkgs.stdenv.hostPlatform) system;
+                modules = [
+                  self.nixosModules.default
+                  {
+                    services.garm.provision = {
+                      enable = true;
+                      settings.controller.webhook_url = "not a URL";
+                    };
+                  }
+                ];
+              };
+              failed = pkgs.testers.testBuildFailure system.config.services.garm.provision.stateFile;
+            in
+            pkgs.runCommand "garm-reconcile-module-validation" { } ''
+              grep -F "controller.webhook_url" ${failed}/testBuildFailure.log
+              touch $out
+            '';
         }
       );
 

@@ -17,7 +17,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        check: [package, vm-test, module-test]
+        check: [package, vm-test, module-test, module-validation]
     name: ${{ matrix.check }}
     runs-on: ubuntu-latest
     timeout-minutes: 45

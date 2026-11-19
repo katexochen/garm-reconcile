@@ -121,6 +121,14 @@ in
         then read from that file when the state is applied.
       '';
     };
+
+    stateFile = lib.mkOption {
+      type = lib.types.package;
+      readOnly = true;
+      internal = true;
+      default = checkedStateFile;
+      description = "The checked desired state the service applies.";
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -147,7 +155,7 @@ in
             "-drain-timeout"
             cfg.drainTimeout
           ]
-          ++ [ "${checkedStateFile}" ]
+          ++ [ "${cfg.stateFile}" ]
         );
         LoadCredential = map (
           path: "${credentialName path}:${lib.replaceStrings [ "%" ] [ "%%" ] path}"
