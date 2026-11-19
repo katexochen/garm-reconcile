@@ -159,6 +159,19 @@ let
       };
     };
 
+  movedPool = pool // {
+    provider_name = "incus-other";
+  };
+
+  # The sections of gitea after its credentials got another name.
+  renamed = {
+    credentials.renamed = base.gitea.credentials.test;
+    repositories."test/test" = repository // {
+      credentials_name = "renamed";
+      pools.second = movedPool;
+    };
+  };
+
   states = lib.mapAttrs (name: pkgs.writers.writeJSON "${name}.json") {
     initial = base;
     # Settings that garm applies to a pool in place.
@@ -181,6 +194,34 @@ let
       };
     };
     replaced = withPools { second = pool; };
+    # Two runners, of which the test keeps one busy.
+    widened = withPools {
+      second = pool // {
+        min_idle_runners = 2;
+        max_runners = 2;
+      };
+    };
+    moved = withPools { second = movedPool; };
+    renamed = withGitea renamed;
+    relocated = withGitea (
+      renamed
+      // {
+        endpoints.local = base.gitea.endpoints.local // {
+          base_url = "http://${hostIP}:3001";
+        };
+      }
+    );
+    adopted = withGitea (
+      renamed
+      // {
+        repositories."test/test" = renamed.repositories."test/test" // {
+          pools = {
+            second = movedPool;
+            adopted = pool;
+          };
+        };
+      }
+    );
     # Nothing but the controller itself.
     empty = removeAttrs base [ "gitea" ];
   };
@@ -289,27 +330,32 @@ in
           apiserver.bind = "0.0.0.0";
           jwt_auth.secret._secret = "/etc/garm-jwt-secret";
           database.passphrase._secret = "/etc/garm-db-passphrase";
-          provider = [
-            {
-              name = "incus";
-              description = "Incus external provider";
-              provider_type = "external";
-              external = {
-                provider_executable = lib.getExe pkgs.garm-provider-incus;
-                config_file = pkgs.writers.writeTOML "incus-provider.toml" {
-                  unix_socket_path = "/var/lib/incus/unix.socket";
-                  project_name = "default";
-                  instance_type = "container";
-                  include_default_profile = false;
-                  image_remotes.images = {
-                    addr = "https://127.0.0.1";
-                    public = true;
-                    protocol = "simplestreams";
+          # Two names for the same provider, to move a pool between them.
+          provider =
+            map
+              (name: {
+                inherit name;
+                description = "Incus external provider";
+                provider_type = "external";
+                external = {
+                  provider_executable = lib.getExe pkgs.garm-provider-incus;
+                  config_file = pkgs.writers.writeTOML "incus-provider.toml" {
+                    unix_socket_path = "/var/lib/incus/unix.socket";
+                    project_name = "default";
+                    instance_type = "container";
+                    include_default_profile = false;
+                    image_remotes.images = {
+                      addr = "https://127.0.0.1";
+                      public = true;
+                      protocol = "simplestreams";
+                    };
                   };
                 };
-              };
-            }
-          ];
+              })
+              [
+                "incus"
+                "incus-other"
+              ];
         };
 
       };
@@ -387,6 +433,9 @@ in
 
     def runners(prefix):
         return [r for r in garm("runner list") if r["name"].startswith(prefix + "-")]
+
+    def pool_runners(pool_id):
+        return [r["name"] for r in garm("runner list") if r.get("pool_id") == pool_id]
 
     def instances():
         return machine.succeed("incus list -c n --format csv").split()
@@ -571,12 +620,74 @@ in
         run_job("on-second-pool", "second")
         assert all(i.startswith("second-") for i in instances()), f"unexpected instances: {instances()}"
 
-    with subtest("everything is removed"):
-        expect("apply", reconcile("apply", "empty", "-prune"), [
+    with subtest("a pool moves to another provider, its idle runner goes first"):
+        expect("apply", reconcile("apply", "widened"), [
+            "update gitea pool test/test/second (max_runners, min_idle_runners)",
+        ])
+        wait_until("waiting for two runners", lambda: len(unused_runner("second")) == 2)
+        start_job("held", "second", "until [ -e /run/release ]; do sleep 1; done")
+        wait_until(
+            "waiting for garm to see the job",
+            lambda: sorted(r["runner_status"] for r in runners("second")) == ["active", "idle"],
+        )
+        busy = [r["name"] for r in runners("second") if r["runner_status"] == "active"]
+        old_pool = pools()["second"]["id"]
+
+        # The provider is part of what identifies a pool.
+        expect("plan", reconcile("plan", "moved", "-prune"), [
+            "create gitea pool test/test/second",
             "delete gitea pool test/test/second",
+        ])
+        output = machine.fail(f"garm-reconcile apply -prune -drain-timeout 5s {states['moved']} 2>&1")
+        assert "waiting for the runners of test/test/second: context deadline exceeded" in output, output
+        wait_until("waiting for the idle runner to be removed", lambda: pool_runners(old_pool) == busy)
+        expect("job", job_status("held"), ["running"])
+
+        machine.succeed(f"incus exec {busy[0]} -- touch /run/release")
+        wait_until("waiting for the job", lambda: job_status("held") == ["success"])
+        expect("apply", reconcile("apply", "moved", "-prune"), ["delete gitea pool test/test/second"])
+        expect("providers", [p["provider_name"] for p in garm("pool list")], ["incus-other"])
+        run_job("on-other-provider", "second")
+
+    with subtest("credentials are renamed"):
+        changes = [
+            "create gitea credentials renamed",
+            "update gitea repository test/test (credentials_name)",
+            "delete gitea credentials test",
+        ]
+        expect("plan", reconcile("plan", "renamed", "-prune"), changes)
+        expect("apply", reconcile("apply", "renamed", "-prune"), changes)
+        expect("credentials", [c["name"] for c in garm("gitea credentials list")], ["renamed"])
+        expect("plan after apply", reconcile("plan", "renamed", "-prune"), ["garm matches the desired state"])
+        run_job("with-renamed-credentials", "second")
+
+    with subtest("an endpoint in use keeps its URLs"):
+        output = machine.fail(f"garm-reconcile apply {states['relocated']} 2>&1")
+        assert "cannot be changed while credentials use the endpoint" in output, output
+
+    with subtest("a pool created by hand is adopted"):
+        machine.succeed(
+            "garm-cli pool add --repo test/test --provider-name incus --image nixos --flavor default"
+            " --tags nixos-test --runner-prefix adopted --max-runners 1 --min-idle-runners 0"
+        )
+        before = pools()["adopted"]["id"]
+        plan = reconcile("plan", "adopted", "-prune")
+        assert len(plan) == 1 and plan[0].startswith("update gitea pool test/test/adopted ("), f"unexpected plan: {plan}"
+        expect("apply", reconcile("apply", "adopted", "-prune"), plan)
+        expect("ID of the pool", pools()["adopted"]["id"], before)
+        expect("template of the pool", pool("adopted")["template_name"], "nixos")
+        expect("plan after apply", reconcile("plan", "adopted", "-prune"), ["garm matches the desired state"])
+
+    with subtest("everything is removed"):
+        changes = reconcile("apply", "empty", "-prune")
+        expect("deleted pools", sorted(changes[:2]), [
+            "delete gitea pool test/test/adopted",
+            "delete gitea pool test/test/second",
+        ])
+        expect("apply", changes[2:], [
             "delete gitea repository test/test",
             "delete gitea template nixos",
-            "delete gitea credentials test",
+            "delete gitea credentials renamed",
             "delete gitea endpoint local",
         ])
         expect("plan", reconcile("plan", "empty", "-prune"), ["garm matches the desired state"])
