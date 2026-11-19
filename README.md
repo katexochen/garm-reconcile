@@ -16,8 +16,7 @@ garm-reconcile apply [-url URL] [-wait DURATION] [-prune] [-drain-timeout DURATI
 ```
 
 - `validate` checks the file without contacting garm. It does not read
-  secrets, so it can run at build time. What only garm can judge, like the
-  strength of the admin password, is reported by `apply`.
+  secrets, so it can run at build time.
 - `plan` prints what `apply` would change.
 - `apply` creates and updates what is declared. With `-prune` it also deletes
   what is not declared.
@@ -51,47 +50,56 @@ github:
       endpoint: github.com
       pat:
         oauth2_token: { _secret: /run/secrets/github-token }
-    # Alternatively, authenticate as an app:
-    # app:
-    #   app_id: 1
-    #   installation_id: 2
-    #   private_key: { _secret: /run/secrets/github-app.pem }
-
-  templates:
-    nixos:
-      os_type: linux
-      data: { _secret: /etc/garm/runner-install.tmpl }
-
-  organizations:
-    my-org:
-      credentials_name: main
-      pools:
-        coco:
-          provider_name: incus
-          image: ubuntu:24.04
-          flavor: default
-          os_type: linux
-          os_arch: amd64
-          tags: [coco]
-          max_runners: 4
-          min_idle_runners: 1
-          enabled: true
-          template: nixos # optional
-      scale_sets:
-        coco-set:
-          provider_name: incus
-          image: ubuntu:24.04
-          flavor: default
-          os_type: linux
-          os_arch: amd64
-          max_runners: 4
-          enabled: true
+      # Alternatively, authenticate as an app:
+      # app:
+      #   app_id: 1
+      #   installation_id: 2
+      #   private_key: { _secret: /run/secrets/github-app.pem }
 
   repositories:
     owner/name:
       credentials_name: main
+      pools:
+        linux:
+          provider_name: incus
+          image: ubuntu:24.04
+          flavor: default
+          os_type: linux
+          os_arch: amd64
+          tags: [self-hosted, linux]
+          max_runners: 4
+          min_idle_runners: 1
+          enabled: true
 
-  enterprises: {}
+  organizations:
+    my-org:
+      credentials_name: main
+      install_webhook: true
+      pools:
+        large:
+          provider_name: incus
+          image: ubuntu:24.04
+          flavor: large
+          os_type: linux
+          os_arch: amd64
+          tags: [self-hosted, large]
+          max_runners: 2
+          enabled: true
+          template: custom
+      scale_sets:
+        linux-set:
+          provider_name: incus
+          image: ubuntu:24.04
+          flavor: default
+          os_type: linux
+          os_arch: amd64
+          max_runners: 4
+          enabled: true
+
+  templates:
+    custom:
+      os_type: linux
+      data: { _secret: /etc/garm/runner-install.tmpl }
 
 gitea:
   endpoints:
@@ -107,6 +115,17 @@ gitea:
     owner/name:
       credentials_name: main
 ```
+
+The example follows the order in which most setups grow: the admin user and
+the URLs of the controller are always needed, then credentials for a forge,
+then the repositories, organizations or enterprises that get runners, each
+with its pools. Templates and endpoints are only needed to change the
+installation of the runner or to use another instance of a forge.
+
+Repositories, organizations and enterprises are the levels at which runners
+can be registered. They can be mixed freely: the runners of a repository only
+take jobs of that repository, those of an organization take jobs of all its
+repositories.
 
 `github` and `gitea` take the same sections. Gitea has no apps, enterprises and
 scale sets. Endpoints and templates cannot have the same name on both forges,
@@ -151,7 +170,7 @@ remove a CA bundle, so both are errors. Declare a new endpoint instead.
 
 garm does not name pools. garm-reconcile identifies a pool by its runner
 prefix, which is the name it is declared under: runners of the pool above are
-called `coco-<id>`. To manage an existing pool, set its runner prefix to a name
+called `linux-<id>`. To manage an existing pool, set its runner prefix to a name
 that is unique within its entity and declare it under that name.
 
 The provider of a pool cannot be changed. Declaring another provider creates a
