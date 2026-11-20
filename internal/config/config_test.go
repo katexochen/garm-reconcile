@@ -158,6 +158,16 @@ func TestParseErrors(t *testing.T) {
 			doc:     strings.Replace(validYAML, "{_secret: /secrets/admin}", "{_secret: 1}", 1),
 			wantErr: "admin.password: a secret reference must have the form",
 		},
+		"placeholders": {
+			doc: strings.NewReplacer(
+				"admin@example.com", "'"+Placeholder("the email of the admin user")+"'",
+				"tags: [coco]", "tags: [coco, '<fill in: a tag>']",
+				"max_runners: 2", "max_runners: 0",
+			).Replace(validYAML),
+			wantErr: "admin.email: the placeholder <fill in: the email of the admin user> has to be replaced\n" +
+				"github.organizations.my-org.pools.coco.tags[1]: the placeholder <fill in: a tag> has to be replaced\n" +
+				"github.organizations.my-org.pools.coco: max_runners cannot be 0",
+		},
 		"invalid desired state": {
 			doc:     strings.Replace(validYAML, "credentials_name: main", "credentials_name: other", 1),
 			wantErr: `credentials "other" are not declared`,
@@ -171,6 +181,17 @@ func TestParseErrors(t *testing.T) {
 				t.Errorf("Parse() error = %v, want it to contain %q", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestParseIgnoresPlaceholdersInSecrets(t *testing.T) {
+	secrets := staticSecrets(map[string]string{"/secrets/admin": Placeholder("a password"), "/secrets/pat": "ghp_token"})
+	cfg, err := Parse([]byte(validYAML), secrets)
+	if err != nil {
+		t.Fatalf("Parse(): %v", err)
+	}
+	if cfg.Admin.Password != "<fill in: a password>" {
+		t.Errorf("password = %q, want what the secret holds", cfg.Admin.Password)
 	}
 }
 

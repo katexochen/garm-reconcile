@@ -302,7 +302,10 @@ func TestEnsureSendsDeclaredWebhookSecret(t *testing.T) {
 	})
 }
 
-func TestEnsureAppCredentials(t *testing.T) {
+// withAppCredentials returns a desired state whose credentials are those of
+// an app, and the private key of the app.
+func withAppCredentials(t *testing.T) (*config.Config, string) {
+	t.Helper()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatal(err)
@@ -317,6 +320,11 @@ func TestEnsureAppCredentials(t *testing.T) {
 		Endpoint: "github.com",
 		App:      &config.App{AppID: 1, InstallationID: 2, PrivateKey: privateKey},
 	}
+	return cfg, privateKey
+}
+
+func TestEnsureAppCredentials(t *testing.T) {
+	cfg, privateKey := withAppCredentials(t)
 	srv := initialized(t, cfg)
 	srv.State(func(st *garmtest.State) {
 		creds := st.Credentials[0]

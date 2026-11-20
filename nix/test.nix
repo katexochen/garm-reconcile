@@ -373,6 +373,7 @@ in
   testScript = ''
     import base64
     import json
+    import re
     from datetime import timedelta
 
     states = json.loads('${builtins.toJSON states}')
@@ -677,6 +678,33 @@ in
         expect("ID of the pool", pools()["adopted"]["id"], before)
         expect("template of the pool", pool("adopted")["template_name"], "nixos")
         expect("plan after apply", reconcile("plan", "adopted", "-prune"), ["garm matches the desired state"])
+
+    with subtest("the exported state matches the controller"):
+        exported = machine.succeed(
+            "garm-reconcile export -username admin"
+            " -password-file /etc/garm-admin-password"
+        )
+        placeholder = "<fill in: the email of the admin user>"
+        assert placeholder in exported, f"unexpected export: {exported}"
+        machine.succeed(f"cat > /run/exported.yaml <<'EOF'\n{exported}\nEOF")
+        output = machine.fail("garm-reconcile validate /run/exported.yaml 2>&1")
+        assert "admin.email: the placeholder" in output, output
+        exported = exported.replace(placeholder, "admin@example.com")
+        secrets = re.findall(r"_secret: (\S+)", exported)
+        expect("secrets", sorted(secrets), ["garm-admin-password", "gitea-renamed-token"])
+        machine.succeed(
+            "mkdir /run/exported",
+            "cp /etc/garm-admin-password /run/exported/garm-admin-password",
+            "cp /run/gitea-token /run/exported/gitea-renamed-token",
+        )
+        machine.succeed(f"cat > /run/exported/state.yaml <<'EOF'\n{exported}\nEOF")
+        expect(
+            "plan",
+            machine.succeed(
+                "CREDENTIALS_DIRECTORY=/run/exported garm-reconcile plan -prune /run/exported/state.yaml"
+            ).splitlines(),
+            ["garm matches the desired state"],
+        )
 
     with subtest("everything is removed"):
         changes = reconcile("apply", "empty", "-prune")

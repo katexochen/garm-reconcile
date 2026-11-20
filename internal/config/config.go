@@ -18,6 +18,7 @@ package config
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 
@@ -181,6 +182,8 @@ func Parse(data []byte, secrets SecretReader) (*Config, error) {
 	if err := dec.Decode(&tree); err != nil {
 		return nil, err
 	}
+	// Secrets are not searched, as they may hold anything.
+	placeholders := errors.Join(findPlaceholders(tree, "")...)
 	tree, err = resolveSecrets(tree, "", secrets)
 	if err != nil {
 		return nil, err
@@ -196,7 +199,7 @@ func Parse(data []byte, secrets SecretReader) (*Config, error) {
 	if err := dec.Decode(&cfg); err != nil {
 		return nil, err
 	}
-	if err := cfg.Validate(); err != nil {
+	if err := errors.Join(placeholders, cfg.Validate()); err != nil {
 		return nil, err
 	}
 	return &cfg, nil

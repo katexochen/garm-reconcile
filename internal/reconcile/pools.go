@@ -105,6 +105,17 @@ func (r *Reconciler) updatePool(ctx context.Context, f *forge, name, id string, 
 // poolDiff returns the fields in which a pool differs from what is declared
 // for it.
 func poolDiff(want params.CreatePoolParams, pool params.Pool) ([]string, error) {
+	have := poolParams(pool)
+
+	want.RunnerBootstrapTimeout = bootstrapTimeout(want.RunnerBootstrapTimeout)
+	want.Tags, have.Tags = tagSet(want.Tags), tagSet(have.Tags)
+	want.ExtraSpecs, have.ExtraSpecs = extraSpecs(want.ExtraSpecs), extraSpecs(have.ExtraSpecs)
+
+	return changedFields(want, have)
+}
+
+// poolParams returns the settings of a pool in the form they are declared.
+func poolParams(pool params.Pool) params.CreatePoolParams {
 	have := params.CreatePoolParams{
 		RunnerPrefix:           params.RunnerPrefix{Prefix: pool.GetRunnerPrefix()},
 		ProviderName:           pool.ProviderName,
@@ -125,12 +136,7 @@ func poolDiff(want params.CreatePoolParams, pool params.Pool) ([]string, error) 
 	for _, tag := range pool.Tags {
 		have.Tags = append(have.Tags, tag.Name)
 	}
-
-	want.RunnerBootstrapTimeout = bootstrapTimeout(want.RunnerBootstrapTimeout)
-	want.Tags, have.Tags = tagSet(want.Tags), tagSet(have.Tags)
-	want.ExtraSpecs, have.ExtraSpecs = extraSpecs(want.ExtraSpecs), extraSpecs(have.ExtraSpecs)
-
-	return changedFields(want, have)
+	return have
 }
 
 // poolUpdate returns the request that brings a pool to its declared state.

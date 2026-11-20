@@ -13,6 +13,7 @@ matches it.
 garm-reconcile validate <file>
 garm-reconcile plan  [-url URL] [-wait DURATION] [-prune] <file>
 garm-reconcile apply [-url URL] [-wait DURATION] [-prune] [-drain-timeout DURATION] <file>
+garm-reconcile export [-url URL] [-wait DURATION] -username NAME -password-file FILE
 ```
 
 - `validate` checks the file without contacting garm. It does not read
@@ -20,9 +21,11 @@ garm-reconcile apply [-url URL] [-wait DURATION] [-prune] [-drain-timeout DURATI
 - `plan` prints what `apply` would change.
 - `apply` creates and updates what is declared. With `-prune` it also deletes
   what is not declared.
+- `export` prints what garm has as a desired state file, see
+  [Adopting a controller](#adopting-a-controller).
 
-`-url` defaults to `http://127.0.0.1:9997`. Both `plan` and `apply` wait for
-the API to come up, for one minute unless `-wait` says otherwise.
+`-url` defaults to `http://127.0.0.1:9997`. All commands but `validate` wait
+for the API to come up, for one minute unless `-wait` says otherwise.
 
 ## Desired state
 
@@ -234,6 +237,40 @@ a busy runner for idle, and Gitea does not refuse to delete it. GitHub does.
 deletes them. Waiting cannot outlast the lifetime of garm's API tokens
 (`jwt_auth.time_to_live`) either. An interrupted `apply` continues where it
 left off when run again.
+
+## Adopting a controller
+
+`export` prints the state of a controller that was set up by hand, so that
+`plan -prune` with the result reports no changes:
+
+```
+garm-reconcile export -username admin -password-file admin-password > state.yaml
+```
+
+It logs in as the admin user and changes nothing. garm keeps some things to
+itself, which have to be filled in:
+
+- Secrets. The state file references them by name: `garm-admin-password`, and
+  for credentials `<forge>-<name>-token` or `<forge>-<name>-private-key`.
+  Provide these files in `$CREDENTIALS_DIRECTORY`, or replace the references.
+- The email of the admin user, which is exported as the placeholder
+  `<fill in: the email of the admin user>`. `validate`, `plan` and `apply`
+  reject a state file that still has a placeholder of this form.
+- The full name of the admin user, which is left out.
+- `app_id` and `installation_id` of app credentials, which are exported as 0
+  and rejected likewise.
+- Webhook secrets. They are not part of the export, and garm keeps the ones
+  it has.
+
+garm also accepts settings that a state file cannot declare, for example a
+runner prefix in upper case or a pool with `max_runners` of 0. They are
+exported as they are. `export` lists on stderr what `validate` would reject,
+placeholders included, so that it can be changed in garm or in the file.
+
+Pools are identified by their runner prefix, so `export` fails when a
+repository, organization or enterprise has two pools with the same one, which
+is the case for pools that were created without a prefix. Give them distinct
+prefixes first, with `garm-cli pool update --runner-prefix`.
 
 ## systemd
 

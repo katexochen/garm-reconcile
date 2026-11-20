@@ -98,3 +98,33 @@ func joinPath(path, key string) string {
 	}
 	return path + "." + key
 }
+
+// Placeholder returns the value an exported state has for a setting that
+// garm does not reveal. what describes the setting. A state with a
+// placeholder left in it is not valid.
+func Placeholder(what string) string {
+	return placeholderPrefix + what + ">"
+}
+
+const placeholderPrefix = "<fill in: "
+
+// findPlaceholders returns an error for every placeholder in the decoded
+// document v. path locates v in the document.
+func findPlaceholders(v any, path string) []error {
+	var found []error
+	switch v := v.(type) {
+	case string:
+		if strings.HasPrefix(v, placeholderPrefix) && strings.HasSuffix(v, ">") {
+			found = append(found, fmt.Errorf("%s: the placeholder %s has to be replaced", path, v))
+		}
+	case map[string]any:
+		for _, key := range sortedKeys(v) {
+			found = append(found, findPlaceholders(v[key], joinPath(path, key))...)
+		}
+	case []any:
+		for i, elem := range v {
+			found = append(found, findPlaceholders(elem, fmt.Sprintf("%s[%d]", path, i))...)
+		}
+	}
+	return found
+}

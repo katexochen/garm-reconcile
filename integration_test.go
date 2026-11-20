@@ -210,6 +210,19 @@ func TestAgainstGarm(t *testing.T) {
 		if got := mustExecute(t, "apply", "-url", url, "-prune", path); got != "" {
 			t.Errorf("second apply printed:\n%s", got)
 		}
+
+		// What garm has can be exported and is the desired state again.
+		for _, secret := range []string{"garm-admin-password", "github-main-token", "github-renamed-token", "gitea-main-token"} {
+			writeFile(t, credentials, secret, "ghp_0000000000000000000000000000000000\n")
+		}
+		writeFile(t, credentials, "garm-admin-password", "CbIhvLQTXCCfVROvLcJ2B7A85BGWbasV\n")
+		exported := mustExecute(t, "export", "-url", url, "-username", "admin",
+			"-password-file", filepath.Join(credentials, "admin-password"))
+		exported = strings.Replace(exported, "<fill in: the email of the admin user>", "admin@example.com", 1)
+		path = writeFile(t, t.TempDir(), "exported.yaml", exported)
+		if got := mustExecute(t, "plan", "-url", url, "-prune", path); got != "garm matches the desired state\n" {
+			t.Errorf("plan with the exported state printed:\n%s\nfor:\n%s", got, exported)
+		}
 	}
 	state := fmt.Sprintf(integrationState, url)
 	change := func(old, new string) {

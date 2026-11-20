@@ -23,6 +23,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -33,11 +34,13 @@ import (
 )
 
 const usage = `Usage: garm-reconcile <command> [flags] <desired state file>
+       garm-reconcile export [flags]
 
 Commands:
   validate  check the desired state file without contacting garm
   plan      show what apply would change
   apply     create and update what is declared, and with -prune delete the rest
+  export    print what garm has as a desired state file
 
 Run "garm-reconcile <command> -h" for the flags of a command.
 `
@@ -85,6 +88,8 @@ func (c cli) run(ctx context.Context, args []string) error {
 		return c.plan(ctx, args)
 	case "apply":
 		return c.apply(ctx, args)
+	case "export":
+		return c.export(ctx, args)
 	case "help", "-h", "-help", "--help":
 		fmt.Fprint(c.stdout, usage)
 		return nil
@@ -94,29 +99,58 @@ func (c cli) run(ctx context.Context, args []string) error {
 	}
 }
 
+// connection is how to reach garm.
+type connection struct {
+	url  string
+	wait time.Duration
+}
+
+func (o *connection) register(fs *flag.FlagSet) {
+	fs.StringVar(&o.url, "url", "http://127.0.0.1:9997", "base URL of the garm API")
+	fs.DurationVar(&o.wait, "wait", time.Minute, "how long to wait for the garm API to come up")
+}
+
+// client returns a client for the API of garm once it is reachable.
+func (o *connection) client(ctx context.Context) (*garm.Client, error) {
+	client, err := garm.NewClient(o.url)
+	if err != nil {
+		return nil, fmt.Errorf("-url: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(ctx, o.wait)
+	defer cancel()
+	if err := client.WaitReady(ctx); err != nil {
+		return nil, err
+	}
+	return client, nil
+}
+
 // options are the flags plan and apply have in common.
 type options struct {
-	url   string
-	wait  time.Duration
+	connection
 	prune bool
 }
 
 func (o *options) register(fs *flag.FlagSet) {
-	fs.StringVar(&o.url, "url", "http://127.0.0.1:9997", "base URL of the garm API")
-	fs.DurationVar(&o.wait, "wait", time.Minute, "how long to wait for the garm API to come up")
+	o.connection.register(fs)
 	fs.BoolVar(&o.prune, "prune", false, "delete what is not declared")
+}
+
+// parseFlags parses the flags of a command.
+func (c cli) parseFlags(fs *flag.FlagSet, args []string) error {
+	// Errors are printed by main, only the help is printed here.
+	fs.SetOutput(io.Discard)
+	err := fs.Parse(args)
+	if errors.Is(err, flag.ErrHelp) {
+		fs.SetOutput(c.stderr)
+		fs.Usage()
+	}
+	return err
 }
 
 // parse parses the flags of a command and returns the path of the desired
 // state file, which is its only argument.
 func (c cli) parse(fs *flag.FlagSet, args []string) (string, error) {
-	// Errors are printed by main, only the help is printed here.
-	fs.SetOutput(io.Discard)
-	if err := fs.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			fs.SetOutput(c.stderr)
-			fs.Usage()
-		}
+	if err := c.parseFlags(fs, args); err != nil {
 		return "", err
 	}
 	if fs.NArg() != 1 {
@@ -137,13 +171,8 @@ func (c cli) prepare(ctx context.Context, fs *flag.FlagSet, opts *options, args 
 	if err != nil {
 		return nil, nil, err
 	}
-	client, err := garm.NewClient(opts.url)
+	client, err := opts.client(ctx)
 	if err != nil {
-		return nil, nil, fmt.Errorf("-url: %w", err)
-	}
-	ctx, cancel := context.WithTimeout(ctx, opts.wait)
-	defer cancel()
-	if err := client.WaitReady(ctx); err != nil {
 		return nil, nil, err
 	}
 	return cfg, client, nil
@@ -234,5 +263,50 @@ func (c cli) apply(ctx context.Context, args []string) error {
 	}
 	// Clear what was reported as being waited for.
 	_ = sdnotify.Status("")
+	return nil
+}
+
+func (c cli) export(ctx context.Context, args []string) error {
+	var conn connection
+	var username, passwordFile string
+	fs := flag.NewFlagSet("export", flag.ContinueOnError)
+	conn.register(fs)
+	fs.StringVar(&username, "username", "", "name of the admin user of garm")
+	fs.StringVar(&passwordFile, "password-file", "", "file with the password of the admin user")
+	if err := c.parseFlags(fs, args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("export takes no arguments")
+	}
+	if username == "" || passwordFile == "" {
+		return errors.New("export requires -username and -password-file")
+	}
+	password, err := os.ReadFile(passwordFile)
+	if err != nil {
+		return fmt.Errorf("-password-file: %w", err)
+	}
+
+	client, err := conn.client(ctx)
+	if err != nil {
+		return err
+	}
+	client.ReadOnly()
+	cfg, err := reconcile.Export(ctx, client, username, strings.TrimRight(string(password), "\r\n"))
+	if err != nil {
+		return err
+	}
+	state, err := config.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	if _, err := c.stdout.Write(state); err != nil {
+		return err
+	}
+	// Garm takes settings that a state file cannot declare, and keeps some
+	// that one requires to itself.
+	if _, err := config.Parse(state, config.PlaceholderSecrets); err != nil {
+		fmt.Fprintf(c.stderr, "The exported state is not valid as it is:\n%v\n", err)
+	}
 	return nil
 }

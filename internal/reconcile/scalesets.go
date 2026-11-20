@@ -108,6 +108,22 @@ func (r *Reconciler) updateScaleSet(ctx context.Context, f *forge, name string, 
 // scaleSetDiff returns the fields in which a scale set differs from what is
 // declared for it.
 func scaleSetDiff(want params.CreateScaleSetParams, set params.ScaleSet) ([]string, error) {
+	have := scaleSetParams(set)
+
+	want.RunnerBootstrapTimeout = bootstrapTimeout(want.RunnerBootstrapTimeout)
+	if want.GitHubRunnerGroup == "" {
+		want.GitHubRunnerGroup = defaultRunnerGroup
+	}
+	want.Prefix = want.GetRunnerPrefix()
+	want.Labels, have.Labels = tagSet(want.Labels), tagSet(have.Labels)
+	want.ExtraSpecs, have.ExtraSpecs = extraSpecs(want.ExtraSpecs), extraSpecs(have.ExtraSpecs)
+
+	return changedFields(want, have)
+}
+
+// scaleSetParams returns the settings of a scale set in the form they are
+// declared.
+func scaleSetParams(set params.ScaleSet) params.CreateScaleSetParams {
 	have := params.CreateScaleSetParams{
 		RunnerPrefix:           params.RunnerPrefix{Prefix: set.GetRunnerPrefix()},
 		Name:                   set.Name,
@@ -129,16 +145,7 @@ func scaleSetDiff(want params.CreateScaleSetParams, set params.ScaleSet) ([]stri
 	for _, tag := range set.Tags {
 		have.Labels = append(have.Labels, tag.Name)
 	}
-
-	want.RunnerBootstrapTimeout = bootstrapTimeout(want.RunnerBootstrapTimeout)
-	if want.GitHubRunnerGroup == "" {
-		want.GitHubRunnerGroup = defaultRunnerGroup
-	}
-	want.Prefix = want.GetRunnerPrefix()
-	want.Labels, have.Labels = tagSet(want.Labels), tagSet(have.Labels)
-	want.ExtraSpecs, have.ExtraSpecs = extraSpecs(want.ExtraSpecs), extraSpecs(have.ExtraSpecs)
-
-	return changedFields(want, have)
+	return have
 }
 
 // scaleSetUpdate returns the request that brings a scale set to its

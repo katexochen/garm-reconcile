@@ -207,6 +207,64 @@ create github pool my-org/coco
 	})
 }
 
+func TestExport(t *testing.T) {
+	srv := garmtest.NewServer(t)
+	path := setup(t, desiredState)
+	mustExecute(t, "apply", "-url", srv.URL, path)
+	passwordFile := filepath.Join(os.Getenv("CREDENTIALS_DIRECTORY"), "admin-password")
+	export := []string{"export", "-url", srv.URL, "-username", "admin", "-password-file", passwordFile}
+
+	const placeholder = "<fill in: the email of the admin user>"
+	state, stderr, err := execute(t, export...)
+	if want := "The exported state is not valid as it is:\nadmin.email: the placeholder " + placeholder + " has to be replaced\n"; err != nil || stderr != want {
+		t.Errorf("export: error = %v, stderr = %q, want %q", err, stderr, want)
+	}
+	writeFile(t, os.Getenv("CREDENTIALS_DIRECTORY"), "garm-admin-password", "hunter2\n")
+	writeFile(t, os.Getenv("CREDENTIALS_DIRECTORY"), "github-main-token", "ghp_token\n")
+	for _, command := range []string{"validate", "plan", "apply"} {
+		_, _, err := execute(t, command, writeFile(t, t.TempDir(), "garm.yaml", state))
+		if err == nil || !strings.Contains(err.Error(), "admin.email: the placeholder") {
+			t.Errorf("%s with a placeholder = %v, want it to be rejected", command, err)
+		}
+	}
+	state = strings.Replace(state, placeholder, "admin@example.com", 1)
+	exported := writeFile(t, t.TempDir(), "garm.yaml", state)
+	if stdout := mustExecute(t, "plan", "-url", srv.URL, "-prune", exported); stdout != "garm matches the desired state\n" {
+		t.Errorf("plan with the exported state printed %q", stdout)
+	}
+	srv.State(func(st *garmtest.State) {
+		if n := len(st.Mutations); n != 5 {
+			t.Errorf("%d requests changed the controller, want only the 5 of the first apply: %v", n, st.Mutations)
+		}
+	})
+
+	// What garm has but a state file cannot declare is pointed out.
+	srv.State(func(st *garmtest.State) { st.Pools[0].Prefix = "CoCo" })
+	state, stderr, err = execute(t, export...)
+	if err != nil || !strings.Contains(state, "CoCo:") ||
+		!strings.Contains(stderr, "\ngithub.organizations.my-org.pools.CoCo") {
+		t.Errorf("export: error = %v, stderr = %q, state:\n%s", err, stderr, state)
+	}
+
+	tests := map[string]struct {
+		args    []string
+		wantErr string
+	}{
+		"no username":      {args: []string{"export", "-password-file", passwordFile}, wantErr: "export requires -username and -password-file"},
+		"no password file": {args: []string{"export", "-username", "admin"}, wantErr: "export requires -username and -password-file"},
+		"missing file":     {args: []string{"export", "-username", "admin", "-password-file", passwordFile + ".missing"}, wantErr: "-password-file: open"},
+		"argument":         {args: append(export, "garm.yaml"), wantErr: "export takes no arguments"},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			_, _, err := execute(t, tt.args...)
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("error = %v, want it to contain %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestRejectedLoginHasItsOwnExitStatus(t *testing.T) {
 	srv := garmtest.NewServer(t)
 	path := setup(t, desiredState)
