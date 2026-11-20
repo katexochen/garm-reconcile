@@ -74,6 +74,26 @@
         {
           package = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
           formatting = (treefmt pkgs).config.build.check self;
+          lint = self.packages.${pkgs.stdenv.hostPlatform.system}.default.overrideAttrs (old: {
+            pname = "garm-reconcile-lint";
+            src = nixpkgs.lib.fileset.toSource {
+              root = ./.;
+              fileset = nixpkgs.lib.fileset.unions [
+                ./go.mod
+                ./go.sum
+                ./.golangci.yml
+                (nixpkgs.lib.fileset.fileFilter (file: file.hasExt "go") ./.)
+              ];
+            };
+            nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.golangci-lint ];
+            buildPhase = ''
+              runHook preBuild
+              HOME=$TMPDIR golangci-lint run ./...
+              runHook postBuild
+            '';
+            doCheck = false;
+            installPhase = "touch $out";
+          });
         }
         // nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isx86_64 {
           vm-test = pkgs.testers.runNixOSTest {
@@ -111,6 +131,10 @@
       devShells = forAllSystems (pkgs: {
         default = pkgs.mkShell {
           inputsFrom = [ self.packages.${pkgs.stdenv.hostPlatform.system}.default ];
+          packages = [
+            pkgs.golangci-lint
+            pkgs.govulncheck
+          ];
         };
       });
     };
