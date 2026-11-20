@@ -150,3 +150,17 @@ The maintainer's answer to
 declarative configuration should live outside of garm. Since garm-reconcile
 uses garm's own request types, it could still move to the cloudbase
 organization, or become `garm-cli apply`, with little change.
+
+## Findings not directly related to garm-reconcile
+
+- **Runners have no login session.** The systemd unit garm installs for a
+  GitHub runner (`githubSystemdUnitTemplate` in `runner/metadata.go`) starts
+  it as a system service with `User=`, so jobs get no `XDG_RUNTIME_DIR` and
+  no user service manager. Tools that need them when not run as root fail,
+  like `systemd-vmspawn`, which keeps its state under `$XDG_RUNTIME_DIR` and
+  allocates a scope on the user bus. Jobs on GitHub's hosted runners have
+  both. Workaround: amutable-nixos-infra patches the template with
+  `PAMName=login`, `After=systemd-user-sessions.service`, and
+  `KillMode=mixed`, as systemd refuses `KillMode=process` with PAM. An
+  option per pool or scale set would do, as not every runner wants a
+  session.
