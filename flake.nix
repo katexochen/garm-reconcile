@@ -15,10 +15,20 @@
 {
   description = "Declarative configuration for garm";
 
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    treefmt-nix = {
+      url = "github:numtide/treefmt-nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+  };
 
   outputs =
-    { self, nixpkgs }:
+    {
+      self,
+      nixpkgs,
+      treefmt-nix,
+    }:
     let
       forAllSystems =
         f:
@@ -26,11 +36,29 @@
           "x86_64-linux"
           "aarch64-linux"
         ] (system: f nixpkgs.legacyPackages.${system});
+
+      treefmt =
+        pkgs:
+        treefmt-nix.lib.evalModule pkgs {
+          projectRootFile = "flake.nix";
+          programs.nixfmt.enable = true;
+          programs.gofmt.enable = true;
+          programs.mdformat = {
+            enable = true;
+            settings.number = true;
+          };
+          programs.yamlfmt = {
+            enable = true;
+            settings.formatter.retain_line_breaks_single = true;
+          };
+        };
     in
     {
       packages = forAllSystems (pkgs: {
         default = pkgs.callPackage ./package.nix { };
       });
+
+      formatter = forAllSystems (pkgs: (treefmt pkgs).config.build.wrapper);
 
       nixosModules.default =
         { lib, pkgs, ... }:
@@ -45,6 +73,7 @@
         pkgs:
         {
           package = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
+          formatting = (treefmt pkgs).config.build.check self;
         }
         // nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isx86_64 {
           vm-test = pkgs.testers.runNixOSTest {

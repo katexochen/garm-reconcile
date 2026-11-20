@@ -307,7 +307,8 @@ go test ./...
 
 `TestAgainstGarm` reconciles a real controller and is skipped unless `garm` is
 in `$PATH`. `nix flake check` runs all tests against garm from nixpkgs, and
-`nix develop` provides it for `go test`.
+`nix develop` provides it for `go test`. `nix fmt` formats everything, which
+`nix flake check` requires.
 
 garm-reconcile is built against the request types of a garm release. After
 updating that dependency, `TestEnsureCoversAllPoolFields` and
