@@ -33,7 +33,7 @@ buildGoModule {
     ];
   };
 
-  vendorHash = "sha256-zWLOOlmfVI1tMngRVTR4NEC8UAG5Y8fL87liDCUyKfI=";
+  vendorHash = "sha256-ytECrYdCfDBXAs8726ITpWWYGJluJrh8irmOoUOGchM=";
 
   # The tests reconcile a garm controller.
   nativeCheckInputs = [ garm ];
