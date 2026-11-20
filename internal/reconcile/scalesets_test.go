@@ -92,6 +92,66 @@ func TestScaleSets(t *testing.T) {
 	assertEqual(t, "changes of the second run", run{srv: srv, cfg: cfg}.ensure(t), nil)
 }
 
+func TestScaleSetsOfTwoRepositoriesShareAName(t *testing.T) {
+	cfg := desiredState()
+	cfg.GitHub.Credentials["other"] = config.Credentials{Endpoint: "github.com", PAT: &config.PAT{OAuth2Token: "ghp_other"}}
+	sets := func() map[string]config.ScaleSet { return map[string]config.ScaleSet{"coco-set": scaleSet()} }
+	cfg.GitHub.Repositories = map[string]config.Entity{
+		"owner/repo":  {CredentialsName: "main", ScaleSets: sets()},
+		"other/other": {CredentialsName: "other", ScaleSets: sets()},
+	}
+	srv := initialized(t, cfg)
+	srv.State(func(st *garmtest.State) {
+		assertEqual(t, "scale sets", len(st.ScaleSets), 2)
+		if st.ScaleSets[0].RepoID == st.ScaleSets[1].RepoID {
+			t.Errorf("both scale sets belong to repository %s", st.ScaleSets[0].RepoID)
+		}
+	})
+	assertEqual(t, "changes of the second run", run{srv: srv, cfg: cfg}.ensure(t), nil)
+
+	changed := scaleSet()
+	changed.MaxRunners = 4
+	cfg.GitHub.Repositories["other/other"].ScaleSets["coco-set"] = changed
+	assertEqual(t, "changes", run{srv: srv, cfg: cfg}.ensure(t),
+		[]string{"update github scale set other/other/coco-set (max_runners)"})
+
+	delete(cfg.GitHub.Repositories["owner/repo"].ScaleSets, "coco-set")
+	assertEqual(t, "pruned", run{srv: srv, cfg: cfg}.prune(t), []string{"delete github scale set owner/repo/coco-set"})
+	srv.State(func(st *garmtest.State) {
+		assertEqual(t, "scale sets", len(st.ScaleSets), 1)
+		assertEqual(t, "max runners of the one left", st.ScaleSets[0].MaxRunners, 4)
+	})
+}
+
+func TestCredentialsOfEntityWithScaleSetAreRenamed(t *testing.T) {
+	cfg := withScaleSet()
+	srv := initialized(t, cfg)
+	var before uint
+	srv.State(func(st *garmtest.State) { before = st.ScaleSets[0].ID })
+
+	cfg.GitHub.Credentials = map[string]config.Credentials{"renamed": cfg.GitHub.Credentials["main"]}
+	for _, entities := range []map[string]config.Entity{cfg.GitHub.Repositories, cfg.GitHub.Organizations, cfg.GitHub.Enterprises} {
+		for name, entity := range entities {
+			entity.CredentialsName = "renamed"
+			entities[name] = entity
+		}
+	}
+	r := run{srv: srv, cfg: cfg}
+	assertEqual(t, "changes", r.ensure(t), []string{
+		"create github credentials renamed",
+		"update github repository owner/repo (credentials_name)",
+		"update github organization my-org (credentials_name)",
+		"update github enterprise corp (credentials_name)",
+	})
+	assertEqual(t, "pruned", r.prune(t), []string{"delete github credentials main"})
+	srv.State(func(st *garmtest.State) {
+		assertEqual(t, "scale sets", len(st.ScaleSets), 1)
+		assertEqual(t, "scale set", st.ScaleSets[0].ID, before)
+		assertEqual(t, "credentials of the organization", st.Entities[garm.Organization][0].CredentialsName, "renamed")
+	})
+	assertEqual(t, "changes of the second run", r.ensure(t), nil)
+}
+
 func TestScaleSetImmutableSettings(t *testing.T) {
 	tests := map[string]func(*config.ScaleSet){
 		"provider_name":  func(s *config.ScaleSet) { s.ProviderName = "lxd" },
