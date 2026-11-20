@@ -32,7 +32,9 @@ func TestWaitReady(t *testing.T) {
 		t.Fatal(err)
 	}
 	addr := listener.Addr().String()
-	listener.Close()
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
 
 	client, err := NewClient("http://" + addr)
 	if err != nil {
@@ -63,7 +65,9 @@ func TestWaitReadyGivesUp(t *testing.T) {
 		t.Fatal(err)
 	}
 	addr := listener.Addr().String()
-	listener.Close()
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
 
 	client, err := NewClient("http://" + addr)
 	if err != nil {

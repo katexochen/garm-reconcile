@@ -19,6 +19,7 @@ package garmtest
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -226,8 +227,8 @@ func (s *Server) route(level access, handle handler) http.Handler {
 		resp, err := s.serve(level, handle, r)
 		w.Header().Set("Content-Type", "application/json")
 		if err != nil {
-			apiErr, ok := err.(*apiError)
-			if !ok {
+			var apiErr *apiError
+			if !errors.As(err, &apiErr) {
 				apiErr = &apiError{http.StatusBadRequest, "Bad Request", err.Error()}
 			}
 			w.WriteHeader(apiErr.status)

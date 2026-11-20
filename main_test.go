@@ -65,7 +65,7 @@ github:
 `
 
 // withoutPool is the desired state after removing the pool.
-var withoutPool = desiredState[:strings.Index(desiredState, "      pools:")]
+var withoutPool, _, _ = strings.Cut(desiredState, "      pools:")
 
 func writeFile(t *testing.T, dir, name, content string) string {
 	t.Helper()
@@ -302,7 +302,7 @@ func TestApplyNotifiesSystemd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	t.Setenv("NOTIFY_SOCKET", socket)
 
 	// The job finishes when systemd is told what apply waits for.

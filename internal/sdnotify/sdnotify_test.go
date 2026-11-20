@@ -30,7 +30,7 @@ func TestNotifications(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	t.Setenv("NOTIFY_SOCKET", socket)
 
 	receive := func() string {

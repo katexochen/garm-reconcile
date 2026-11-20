@@ -47,10 +47,10 @@ Run "garm-reconcile <command> -h" for the flags of a command.
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	app := cli{stdout: os.Stdout, stderr: os.Stderr}
 	err := app.run(ctx, os.Args[1:])
+	stop()
 	if err != nil && !errors.Is(err, flag.ErrHelp) {
 		fmt.Fprintln(os.Stderr, "garm-reconcile:", err)
 		os.Exit(exitStatus(err))

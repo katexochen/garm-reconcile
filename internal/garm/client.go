@@ -323,7 +323,7 @@ func (c *Client) request(ctx context.Context, method string, body, result any, e
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return newError(resp)

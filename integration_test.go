@@ -75,7 +75,9 @@ func startGarm(t *testing.T) string {
 		t.Fatal(err)
 	}
 	port := listener.Addr().(*net.TCPAddr).Port
-	listener.Close()
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
 
 	dir := t.TempDir()
 	writeFile(t, dir, "provider.toml", "")
@@ -273,8 +275,10 @@ update gitea endpoint local (description, tools_metadata_url)
 	// including everything on Gitea.
 	state = strings.ReplaceAll(state, "credentials_name: main", "credentials_name: renamed")
 	change("    main:\n", "    renamed:\n")
-	state = state[:strings.Index(state, "        plain:")]
-	state = state[:strings.Index(state, "  templates:")] + state[strings.Index(state, "  organizations:"):]
+	state, _, _ = strings.Cut(state, "        plain:")
+	beforeTemplates, _, _ := strings.Cut(state, "  templates:")
+	_, organizations, _ := strings.Cut(state, "  organizations:")
+	state = beforeTemplates + "  organizations:" + organizations
 	reconcile(state, `create github credentials renamed
 update github organization my-org (credentials_name)
 delete github pool my-org/plain
