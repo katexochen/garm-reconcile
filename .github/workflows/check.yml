@@ -17,7 +17,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        check: [package, vm-test, module-test, module-validation]
+        check: [package, lint, formatting, vm-test, module-test, module-validation]
     name: ${{ matrix.check }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -26,3 +26,12 @@ jobs:
       # Makes /dev/kvm usable for the VM tests.
       - uses: cachix/install-nix-action@v31
       - run: nix build --print-build-logs .#checks.x86_64-linux.${{ matrix.check }}
+
+  govulncheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: cachix/install-nix-action@v31
+      # Downloads the vulnerability database, which a check of the flake cannot.
+      - run: nix develop --command govulncheck ./...
