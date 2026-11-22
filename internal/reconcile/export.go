@@ -15,11 +15,14 @@
 package reconcile
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"slices"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	commonparams "github.com/cloudbase/garm-provider-common/params"
 	"github.com/cloudbase/garm/params"
@@ -143,6 +146,9 @@ func (r *Reconciler) exportForge(ctx context.Context, f *forge, templates []para
 		template, err := r.client.GetTemplate(ctx, listed.ID)
 		if err != nil {
 			return fmt.Errorf("reading %s %s: %w", f.kind("template"), listed.Name, err)
+		}
+		if !isText(template.Data) {
+			return fmt.Errorf("%s %s: its data is not text, which a state file cannot hold", f.kind("template"), listed.Name)
 		}
 		f.cfg.Templates[template.Name] = config.Template{
 			Description: template.Description,
@@ -274,4 +280,14 @@ func (f *forge) templateName(templates []params.Template, id uint, osType common
 		}
 	}
 	return ""
+}
+
+// isText reports whether data survives being written to a YAML file.
+func isText(data []byte) bool {
+	if !utf8.Valid(data) {
+		return false
+	}
+	return !bytes.ContainsFunc(data, func(r rune) bool {
+		return unicode.IsControl(r) && !strings.ContainsRune("\t\n\r", r)
+	})
 }

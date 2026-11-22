@@ -274,6 +274,17 @@ func TestExportErrors(t *testing.T) {
 			t.Errorf("Export() = %v, want it to contain %q", err, want)
 		}
 	})
+	t.Run("template that is not text", func(t *testing.T) {
+		for _, data := range []string{"echo \xff", "echo \u0085", "echo \x7f"} {
+			srv := initialized(t, withTemplate())
+			srv.State(func(st *garmtest.State) { findTemplate(t, st, "nixos").Data = []byte(data) })
+			_, err := export(t, srv, admin)
+			want := "github template nixos: its data is not text"
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Errorf("Export() with the data %q = %v, want it to contain %q", data, err, want)
+			}
+		}
+	})
 	t.Run("scale sets with the same name", func(t *testing.T) {
 		srv := initialized(t, withScaleSet())
 		srv.State(func(st *garmtest.State) {
