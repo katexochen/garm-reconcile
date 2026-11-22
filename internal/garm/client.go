@@ -95,6 +95,12 @@ func (c *Client) Login(ctx context.Context, username, password string) error {
 	return nil
 }
 
+// SetToken authenticates all further calls with a token garm issued
+// before.
+func (c *Client) SetToken(token string) {
+	c.token = token
+}
+
 func (c *Client) ControllerInfo(ctx context.Context) (params.ControllerInfo, error) {
 	var info params.ControllerInfo
 	err := c.do(ctx, http.MethodGet, nil, &info, "controller")

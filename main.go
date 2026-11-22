@@ -268,23 +268,42 @@ func (c cli) apply(ctx context.Context, args []string) error {
 
 func (c cli) export(ctx context.Context, args []string) error {
 	var conn connection
-	var username, passwordFile string
+	var username, passwordFile, profileName string
 	fs := flag.NewFlagSet("export", flag.ContinueOnError)
 	conn.register(fs)
 	fs.StringVar(&username, "username", "", "name of the admin user of garm")
 	fs.StringVar(&passwordFile, "password-file", "", "file with the password of the admin user")
+	fs.StringVar(&profileName, "profile", "",
+		"garm-cli profile to use in place of -url, -username and -password-file, which is the active one if none of them is given")
 	if err := c.parseFlags(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
 		return errors.New("export takes no arguments")
 	}
-	if username == "" || passwordFile == "" {
-		return errors.New("export requires -username and -password-file")
-	}
-	password, err := os.ReadFile(passwordFile)
-	if err != nil {
-		return fmt.Errorf("-password-file: %w", err)
+
+	var password string
+	var profile *garm.Profile
+	if username != "" || passwordFile != "" {
+		if username == "" || passwordFile == "" || profileName != "" {
+			return errors.New("export requires both -username and -password-file, or neither to use a garm-cli profile")
+		}
+		data, err := os.ReadFile(passwordFile)
+		if err != nil {
+			return fmt.Errorf("-password-file: %w", err)
+		}
+		password = strings.TrimRight(string(data), "\r\n")
+	} else {
+		urlSet := false
+		fs.Visit(func(f *flag.Flag) { urlSet = urlSet || f.Name == "url" })
+		if urlSet {
+			return errors.New("-url requires -username and -password-file, a garm-cli profile has its own URL")
+		}
+		loaded, err := garm.LoadProfile(profileName)
+		if err != nil {
+			return fmt.Errorf("without -username and -password-file, a garm-cli profile is used: %w", err)
+		}
+		profile, conn.url = &loaded, loaded.BaseURL
 	}
 
 	client, err := conn.client(ctx)
@@ -292,7 +311,15 @@ func (c cli) export(ctx context.Context, args []string) error {
 		return err
 	}
 	client.ReadOnly()
-	cfg, err := reconcile.Export(ctx, client, username, strings.TrimRight(string(password), "\r\n"))
+	if profile != nil {
+		client.SetToken(profile.Token)
+	} else if err := reconcile.Login(ctx, client, username, password); err != nil {
+		return err
+	}
+	cfg, err := reconcile.Export(ctx, client, username)
+	if profile != nil && garm.IsUnauthorized(err) {
+		return fmt.Errorf("garm rejected the token of the garm-cli profile %s, log in again with garm-cli profile login: %w", profile.Name, err)
+	}
 	if err != nil {
 		return err
 	}

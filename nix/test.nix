@@ -689,6 +689,12 @@ in
         machine.succeed(f"cat > /run/exported.yaml <<'EOF'\n{exported}\nEOF")
         output = machine.fail("garm-reconcile validate /run/exported.yaml 2>&1")
         assert "admin.email: the placeholder" in output, output
+        with_profile = machine.succeed("garm-reconcile export 2>/dev/null")
+        expect(
+            "export with the profile of garm-cli",
+            with_profile.replace("'<fill in: the name of the admin user>'", "admin"),
+            exported,
+        )
         exported = exported.replace(placeholder, "admin@example.com")
         secrets = re.findall(r"_secret: (\S+)", exported)
         expect("secrets", sorted(secrets), ["garm-admin-password", "gitea-renamed-token"])

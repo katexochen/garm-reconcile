@@ -13,7 +13,8 @@ matches it.
 garm-reconcile validate <file>
 garm-reconcile plan  [-url URL] [-wait DURATION] [-prune] <file>
 garm-reconcile apply [-url URL] [-wait DURATION] [-prune] [-drain-timeout DURATION] <file>
-garm-reconcile export [-url URL] [-wait DURATION] -username NAME -password-file FILE
+garm-reconcile export [-wait DURATION] [-profile NAME]
+garm-reconcile export [-wait DURATION] [-url URL] -username NAME -password-file FILE
 ```
 
 - `validate` checks the file without contacting garm. It does not read
@@ -244,18 +245,23 @@ left off when run again.
 `plan -prune` with the result reports no changes:
 
 ```
-garm-reconcile export -username admin -password-file admin-password > state.yaml
+garm-reconcile export > state.yaml
 ```
 
-It logs in as the admin user and changes nothing. garm keeps some things to
-itself, which have to be filled in:
+It changes nothing. Where `garm-cli` is logged in to the controller, `export`
+uses the URL and token of its active profile, or of the one named with
+`-profile`. Otherwise it logs in with `-username` and `-password-file`.
+
+garm keeps some things to itself, which have to be filled in:
 
 - Secrets. The state file references them by name: `garm-admin-password`, and
   for credentials `<forge>-<name>-token` or `<forge>-<name>-private-key`.
   Provide these files in `$CREDENTIALS_DIRECTORY`, or replace the references.
 - The email of the admin user, which is exported as the placeholder
-  `<fill in: the email of the admin user>`. `validate`, `plan` and `apply`
-  reject a state file that still has a placeholder of this form.
+  `<fill in: the email of the admin user>`. So is the name of the admin user
+  when a profile of `garm-cli` is used, which only holds a token. `validate`,
+  `plan` and `apply` reject a state file that still has a placeholder of
+  this form.
 - The full name of the admin user, which is left out.
 - `app_id` and `installation_id` of app credentials, which are exported as 0
   and rejected likewise.

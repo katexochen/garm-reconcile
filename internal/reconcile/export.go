@@ -28,26 +28,41 @@ import (
 	"github.com/katexochen/garm-reconcile/internal/garm"
 )
 
+// Login authenticates client as the admin user of a controller that is
+// initialized.
+func Login(ctx context.Context, client *garm.Client, username, password string) error {
+	err := client.Login(ctx, username, password)
+	switch {
+	case err == nil:
+		return nil
+	case garm.IsNotInitialized(err):
+		return ErrNotInitialized
+	}
+	return loginError(username, err)
+}
+
 // Export returns the state of the controller behind client in the form it
 // is declared, so that reconciling the controller with it changes nothing.
-// It logs in as the admin user with the given name. Secrets are left empty,
-// as garm does not reveal them, and so are the IDs of apps. The email of the
-// admin user is a placeholder for the same reason.
+// The client has to be authenticated. username is the name of the admin
+// user, which is a placeholder if it is empty: garm does not reveal it.
+// Neither does it reveal the email of the admin user, which is a
+// placeholder as well, nor secrets and the IDs of apps, which are left
+// empty.
 //
 // Garm accepts settings that a state file cannot declare, like a runner
 // prefix in upper case. They are exported as they are, which leaves it to
 // the validation of the state to point them out.
-func Export(ctx context.Context, client *garm.Client, username, password string) (*config.Config, error) {
+func Export(ctx context.Context, client *garm.Client, username string) (*config.Config, error) {
+	if username == "" {
+		username = config.Placeholder("the name of the admin user")
+	}
 	cfg := &config.Config{Admin: config.Admin{Username: username, Email: config.Placeholder("the email of the admin user")}}
 	r := New(client, cfg, Options{})
-	if err := client.Login(ctx, username, password); err != nil {
-		if garm.IsNotInitialized(err) {
-			return nil, ErrNotInitialized
-		}
-		return nil, loginError(username, err)
-	}
 
 	info, err := client.ControllerInfo(ctx)
+	if garm.IsNotInitialized(err) {
+		return nil, ErrNotInitialized
+	}
 	if err != nil {
 		return nil, fmt.Errorf("reading the controller settings: %w", err)
 	}

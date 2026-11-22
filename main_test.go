@@ -20,6 +20,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"flag"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -31,6 +32,7 @@ import (
 	"github.com/cloudbase/garm/params"
 
 	"github.com/katexochen/garm-reconcile/internal/garm/garmtest"
+	"github.com/katexochen/garm-reconcile/internal/reconcile"
 )
 
 const desiredState = `
@@ -250,8 +252,10 @@ func TestExport(t *testing.T) {
 		args    []string
 		wantErr string
 	}{
-		"no username":      {args: []string{"export", "-password-file", passwordFile}, wantErr: "export requires -username and -password-file"},
-		"no password file": {args: []string{"export", "-username", "admin"}, wantErr: "export requires -username and -password-file"},
+		"no username":      {args: []string{"export", "-password-file", passwordFile}, wantErr: "export requires both -username and -password-file"},
+		"no password file": {args: []string{"export", "-username", "admin"}, wantErr: "export requires both -username and -password-file"},
+		"profile and user": {args: append(export, "-profile", "garm"), wantErr: "export requires both -username and -password-file"},
+		"no profiles":      {args: []string{"export"}, wantErr: "a garm-cli profile is used: garm-cli has no profiles"},
 		"missing file":     {args: []string{"export", "-username", "admin", "-password-file", passwordFile + ".missing"}, wantErr: "-password-file: open"},
 		"argument":         {args: append(export, "garm.yaml"), wantErr: "export takes no arguments"},
 	}
@@ -262,6 +266,84 @@ func TestExport(t *testing.T) {
 				t.Errorf("error = %v, want it to contain %q", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestExportWithProfile(t *testing.T) {
+	srv := garmtest.NewServer(t)
+	path := setup(t, desiredState)
+	mustExecute(t, "apply", "-url", srv.URL, path)
+	passwordFile := filepath.Join(os.Getenv("CREDENTIALS_DIRECTORY"), "admin-password")
+	want := mustExecute(t, "export", "-url", srv.URL, "-username", "admin", "-password-file", passwordFile)
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	profiles := filepath.Join(home, ".local", "share", "garm-cli")
+	if err := os.MkdirAll(profiles, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, profiles, "config.toml", fmt.Sprintf(`active_manager = "local"
+
+[[manager]]
+  name = "other"
+  base_url = "http://127.0.0.1:1"
+  bearer_token = "other-token"
+
+[[manager]]
+  name = "local"
+  base_url = %[1]q
+  bearer_token = %[2]q
+
+[[manager]]
+  name = "expired"
+  base_url = %[1]q
+  bearer_token = "expired-token"
+`, srv.URL, garmtest.Token))
+
+	// Garm does not tell who a token belongs to.
+	want = strings.Replace(want, "username: admin", "username: '<fill in: the name of the admin user>'", 1)
+	for name, args := range map[string][]string{
+		"active profile": {"export"},
+		"named profile":  {"export", "-profile", "local"},
+	} {
+		got, stderr, err := execute(t, args...)
+		if err != nil || got != want {
+			t.Errorf("%s: error = %v, state:\n%s\nwant:\n%s", name, err, got, want)
+		}
+		if !strings.Contains(stderr, "admin.username: the placeholder") {
+			t.Errorf("%s: stderr = %q, want it to point out the placeholder", name, stderr)
+		}
+	}
+
+	tests := map[string]struct {
+		args    []string
+		wantErr string
+	}{
+		"unknown profile":  {args: []string{"export", "-profile", "missing"}, wantErr: "garm-cli has no profile missing"},
+		"rejected token":   {args: []string{"export", "-profile", "expired"}, wantErr: "garm rejected the token of the garm-cli profile expired"},
+		"unreachable":      {args: []string{"export", "-profile", "other", "-wait", "10ms"}, wantErr: "waiting for garm"},
+		"URL with profile": {args: []string{"export", "-url", srv.URL}, wantErr: "a garm-cli profile has its own URL"},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			_, _, err := execute(t, tt.args...)
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("error = %v, want it to contain %q", err, tt.wantErr)
+			}
+		})
+	}
+
+	fresh := garmtest.NewServer(t)
+	writeFile(t, profiles, "config.toml", fmt.Sprintf("[[manager]]\nname = \"fresh\"\nbase_url = %q\nbearer_token = \"none\"\n", fresh.URL))
+	if _, _, err := execute(t, "export", "-profile", "fresh"); !errors.Is(err, reconcile.ErrNotInitialized) {
+		t.Errorf("export from a new controller = %v, want %v", err, reconcile.ErrNotInitialized)
+	}
+	if _, _, err := execute(t, "export"); err == nil || !strings.Contains(err.Error(), "garm-cli has no active profile") {
+		t.Errorf("export without an active profile = %v", err)
+	}
+	writeFile(t, profiles, "config.toml", "[[manager")
+	if _, _, err := execute(t, "export"); err == nil || !strings.Contains(err.Error(), "config.toml: toml") {
+		t.Errorf("export with a malformed configuration of garm-cli = %v", err)
 	}
 }
 

@@ -37,7 +37,8 @@ import (
 	"github.com/katexochen/garm-reconcile/internal/garm"
 )
 
-const token = "garmtest-token"
+// Token is what the fake issues to the admin user.
+const Token = "garmtest-token"
 
 // State is everything the fake controller stores.
 type State struct {
@@ -249,7 +250,7 @@ func (s *Server) serve(level access, handle handler, r *http.Request) (any, erro
 		e := apiparams.URLsRequired
 		return nil, &apiError{http.StatusConflict, e.Error, e.Details}
 	}
-	if level >= authenticated && r.Header.Get("Authorization") != "Bearer "+token {
+	if level >= authenticated && r.Header.Get("Authorization") != "Bearer "+Token {
 		e := apiparams.UnauthorizedResponse
 		return nil, &apiError{http.StatusUnauthorized, e.Error, e.Details}
 	}
@@ -298,7 +299,7 @@ func (st *State) login(r *http.Request) (any, error) {
 		e := apiparams.UnauthorizedResponse
 		return nil, &apiError{http.StatusUnauthorized, e.Error, e.Details}
 	}
-	return params.JWTResponse{Token: token}, nil
+	return params.JWTResponse{Token: Token}, nil
 }
 
 func (st *State) controllerInfo(_ *http.Request) (any, error) {

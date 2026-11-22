@@ -37,7 +37,10 @@ func export(t *testing.T, srv *garmtest.Server, admin config.Admin) (*config.Con
 		t.Fatal(err)
 	}
 	client.ReadOnly()
-	return reconcile.Export(context.Background(), client, admin.Username, admin.Password)
+	if err := reconcile.Login(context.Background(), client, admin.Username, admin.Password); err != nil {
+		return nil, err
+	}
+	return reconcile.Export(context.Background(), client, admin.Username)
 }
 
 // exportedState exports the controller and reads the result back like a
